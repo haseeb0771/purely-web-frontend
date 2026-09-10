@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  background: #ffffff;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(47, 185, 191, 0.25);
+  color: #0f172a;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2fb9bf;
+}
+
+.text-glow {
+  text-shadow: 0 2px 28px rgba(47, 185, 191, 0.3),
+    0 0 10px rgba(47, 185, 191, 0.12);
+}
+
+.bg-grid {
+  background-image: radial-gradient(rgba(47, 185, 191, 0.1) 1px, transparent 1px),
+    radial-gradient(rgba(47, 185, 191, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: 0 0, 20px 20px;
+}
+
+.glow-ring {
+  box-shadow: 0 0 0 1px rgba(47, 185, 191, 0.18),
+    0 0 40px rgba(47, 185, 191, 0.12);
+}
+
+.glass {
+  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+}
+
+.will-change-transform {
+  will-change: transform, opacity;
+}
+
+html.dark body {
+  background: #0b131b;
+  color: #e2e8f0;
+}
+
+html.dark ::selection {
+  background: rgba(47, 185, 191, 0.4);
+  color: #ffffff;
+}
+
+html.dark ::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #2fb9bf;
+}
+
+html.dark .glass {
+  background: rgba(11, 19, 28, 0.78);
+  border-color: rgba(30, 41, 59, 0.9);
+}
+
+@keyframes toast-shrink {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
