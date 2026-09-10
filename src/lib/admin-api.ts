@@ -12,7 +12,7 @@ export interface ApiResponse<T = unknown> {
 }
 
 export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"
+  process.env.API_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
