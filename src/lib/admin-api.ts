@@ -61,18 +61,11 @@ export async function loginAdmin(
 }
 
 export async function fetchAdminMe(): Promise<SanitizedAdmin> {
-  const response = await fetch(`${API_BASE_URL}/api/admin/me`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
+  const token = getAuthToken();
+  if (!token) {
+    throw new ApiError("No authentication token found.", 401);
   }
-
-  const body = await parseResponse<ApiResponse<SanitizedAdmin>>(response);
-  return body.data!;
+  return apiGet<SanitizedAdmin>("/api/admin/me");
 }
 
 export async function logoutAdmin(): Promise<void> {

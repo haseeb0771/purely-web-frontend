@@ -35,6 +35,15 @@ export default function AdminShell({
     let cancelled = false;
 
     (async () => {
+      // Check for token before making the API call
+      const token = typeof window !== "undefined" ? localStorage.getItem("admin_token") : null;
+      if (!token) {
+        if (!cancelled) {
+          router.replace("/admin");
+        }
+        return;
+      }
+
       try {
         const me = await fetchAdminMe();
         if (cancelled) return;
