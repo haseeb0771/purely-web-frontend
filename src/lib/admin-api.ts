@@ -140,7 +140,7 @@ export interface Paginated<T> {
 }
 
 async function apiGet<T>(url: string): Promise<T> {
-  const token = getAuthToken();
+  const token = localStorage.getItem("admin_token");
   const authHeader = token ? `Bearer ${token}` : undefined;
 
   const response = await fetch(`${API_BASE_URL}${url}`, {
@@ -501,10 +501,15 @@ async function apiSend<T>(
   method: "POST" | "PUT" | "DELETE",
   body?: unknown
 ): Promise<T> {
+  const token = localStorage.getItem("admin_token");
+  const authHeader = token ? `Bearer ${token}` : undefined;
+
   const response = await fetch(`${API_BASE_URL}${url}`, {
     method,
-    credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      ...(authHeader ? { Authorization: authHeader } : {}),
+      ...(body ? { "Content-Type": "application/json" } : undefined),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
 
