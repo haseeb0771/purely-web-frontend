@@ -11,18 +11,13 @@ export interface ApiResponse<T = unknown> {
   data?: T;
 }
 
-function getAuthToken(): string | undefined {
-  if (typeof window === "undefined") return undefined;
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
   return localStorage.getItem("admin_token");
 }
 
-function getAuthHeader(): string | undefined {
-  const token = getAuthToken();
-  return token ? `Bearer ${token}` : undefined;
-}
-
 export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"
+  process.env.API_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
