@@ -11,8 +11,18 @@ export interface ApiResponse<T = unknown> {
   data?: T;
 }
 
+function getAuthToken(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return localStorage.getItem("admin_token");
+}
+
+function getAuthHeader(): string | undefined {
+  const token = getAuthToken();
+  return token ? `Bearer ${token}` : undefined;
+}
+
 export const API_BASE_URL = (
-  process.env.API_URL ?? "http://localhost:5000"
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
@@ -41,8 +51,18 @@ export async function loginAdmin(
     body: JSON.stringify({ email, password }),
   });
 
-  const body = await parseResponse<ApiResponse<SanitizedAdmin>>(response);
-  return body.data!;
+  const text = await response.text();
+  const data = JSON.parse(text);
+
+  if (!response.ok || !data.success) {
+    throw new Error(data.message || "Login failed");
+  }
+
+  // Store token in localStorage
+  typeof window !== "undefined" && localStorage.setItem("admin_token", data.token);
+
+  // Return admin data
+  return data.data;
 }
 
 export async function fetchAdminMe(): Promise<SanitizedAdmin> {
@@ -125,9 +145,14 @@ export interface Paginated<T> {
 }
 
 async function apiGet<T>(url: string): Promise<T> {
+  const token = getAuthToken();
+  const authHeader = token ? `Bearer ${token}` : undefined;
+
   const response = await fetch(`${API_BASE_URL}${url}`, {
     method: "GET",
-    credentials: "include",
+    headers: {
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    },
     cache: "no-store",
   });
 
