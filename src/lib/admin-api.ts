@@ -16,6 +16,43 @@ function getAuthToken(): string | null {
   return localStorage.getItem("admin_token");
 }
 
+function handleUnauthorized(): void {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("admin_token");
+    window.location.href = "/admin";
+  }
+}
+
+async function apiRequest<T>(
+  url: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const token = getAuthToken();
+  const authHeader = token ? `Bearer ${token}` : undefined;
+
+  const isFormData = options.body instanceof FormData;
+
+  const headers: Record<string, string> = {
+    ...(authHeader ? { Authorization: `Bearer ${token!}` } : {}),
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    ...(options.headers as Record<string, string> | undefined),
+  };
+
+  const response = await fetch(`${API_BASE_URL}${url}`, {
+    ...options,
+    headers,
+    cache: "no-store",
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    throw new ApiError("Session expired. Please log in again.", 401);
+  }
+
+  const body = await parseResponse<ApiResponse<T>>(response);
+  return body.data!;
+}
+
 export const API_BASE_URL = (
   process.env.API_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
@@ -69,11 +106,11 @@ export async function fetchAdminMe(): Promise<SanitizedAdmin> {
 }
 
 export async function logoutAdmin(): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/admin/logout`, {
+  const response = await apiRequest<ApiResponse>("/api/admin/logout", {
     method: "POST",
-    credentials: "include",
   });
-  await parseResponse<ApiResponse>(response);
+  // Token already cleared by handleUnauthorized on 401, but also clear locally
+  typeof window !== "undefined" && localStorage.removeItem("admin_token");
 }
 
 export async function updateProfile(input: {
@@ -133,23 +170,7 @@ export interface Paginated<T> {
 }
 
 async function apiGet<T>(url: string): Promise<T> {
-  const token = localStorage.getItem("admin_token");
-  const authHeader = token ? `Bearer ${token}` : undefined;
-
-  const response = await fetch(`${API_BASE_URL}${url}`, {
-    method: "GET",
-    headers: {
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-    cache: "no-store",
-  });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<ApiResponse<T>>(response);
-  return body.data!;
+  return apiRequest<T>(url, { method: "GET" });
 }
 
 export async function fetchAuditLogs(params?: {
@@ -171,27 +192,14 @@ export async function fetchAuditLogs(params?: {
   if (params?.to) query.set("to", params.to);
 
   const qs = query.toString();
-  const response = await fetch(
-    `${API_BASE_URL}/api/audit-logs${qs ? `?${qs}` : ""}`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }
-  );
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<
+  const response = await apiRequest<
     ApiResponse<AuditLogEntry[]> & {
       pagination?: Paginated<AuditLogEntry>["pagination"];
     }
-  >(response);
+  >(`/api/audit-logs${qs ? `?${qs}` : ""}`, { method: "GET" });
 
-  const data = body.data ?? [];
-  const pagination = body.pagination ?? {
+  const data = response.data ?? [];
+  const pagination = response.pagination ?? {
     page: params?.page ?? 1,
     pageSize: params?.pageSize ?? 20,
     total: data.length,
@@ -244,71 +252,44 @@ export async function fetchNotifications(params?: {
   if (params?.type) query.set("type", params.type);
 
   const qs = query.toString();
-  const response = await fetch(
-    `${API_BASE_URL}/api/notifications${qs ? `?${qs}` : ""}`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }
-  );
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<
+  const response = await apiRequest<
     ApiResponse<AdminNotification[]> & {
       pagination?: Paginated<AdminNotification>["pagination"];
       unreadCount?: number;
       totalUnread?: number;
     }
-  >(response);
+  >(`/api/notifications${qs ? `?${qs}` : ""}`, { method: "GET" });
 
   return {
-    data: body.data ?? [],
-    pagination: body.pagination ?? {
+    data: response.data ?? [],
+    pagination: response.pagination ?? {
       page: params?.page ?? 1,
       pageSize: params?.pageSize ?? 20,
-      total: (body.data ?? []).length,
+      total: (response.data ?? []).length,
       totalPages: 1,
     },
-    unreadCount: body.unreadCount ?? 0,
-    totalUnread: body.totalUnread ?? 0,
+    unreadCount: response.unreadCount ?? 0,
+    totalUnread: response.totalUnread ?? 0,
   };
 }
 
 export async function fetchUnreadNotificationCount(): Promise<number> {
-  const response = await fetch(`${API_BASE_URL}/api/notifications/unread-count`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<ApiResponse<{ unreadCount: number }>>(response);
-  return body.data?.unreadCount ?? 0;
+  const response = await apiRequest<
+    ApiResponse<{ unreadCount: number }>
+  >(`/api/notifications/unread-count`, { method: "GET" });
+  return response.data?.unreadCount ?? 0;
 }
 
 export async function markNotificationsRead(
   ids: string[] = []
 ): Promise<number> {
-  const response = await fetch(`${API_BASE_URL}/api/notifications/read`, {
+  const response = await apiRequest<
+    ApiResponse<{ unreadCount: number }>
+  >(`/api/notifications/read`, {
     method: "PUT",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
   });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<ApiResponse<{ unreadCount: number }>>(response);
-  return body.data?.unreadCount ?? 0;
+  return response.data?.unreadCount ?? 0;
 }
 
 export type InquiryStatus = "new" | "replied" | "archived";
@@ -343,30 +324,17 @@ export async function fetchInquiries(params?: {
   if (params?.search) query.set("search", params.search);
 
   const qs = query.toString();
-  const response = await fetch(
-    `${API_BASE_URL}/api/inquiries${qs ? `?${qs}` : ""}`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }
-  );
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<
+  const response = await apiRequest<
     ApiResponse<Inquiry[]> & {
       pagination?: Paginated<Inquiry>["pagination"];
     }
-  >(response);
+  >(`/api/inquiries${qs ? `?${qs}` : ""}`, { method: "GET" });
 
-  const data = body.data ?? [];
-  const pagination = body.pagination ?? {
+  const data = response.data ?? [];
+  const pagination = response.pagination ?? {
     page: params?.page ?? 1,
     pageSize: params?.pageSize ?? 20,
-    total: data.length,
+    total: (response.data ?? []).length,
     totalPages: 1,
   };
 
@@ -475,18 +443,11 @@ export async function uploadBottleImage(
   formData.append("image", file);
   formData.append("folder", folder);
 
-  const response = await fetch(`${API_BASE_URL}/api/upload`, {
+  const response = await apiRequest<UploadResult>(`/api/upload`, {
     method: "POST",
-    credentials: "include",
     body: formData,
   });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const parsed = await parseResponse<ApiResponse<UploadResult>>(response);
-  return parsed.data!;
+  return response;
 }
 
 async function apiSend<T>(
@@ -494,24 +455,11 @@ async function apiSend<T>(
   method: "POST" | "PUT" | "DELETE",
   body?: unknown
 ): Promise<T> {
-  const token = localStorage.getItem("admin_token");
-  const authHeader = token ? `Bearer ${token}` : undefined;
-
-  const response = await fetch(`${API_BASE_URL}${url}`, {
+  return apiRequest<T>(url, {
     method,
-    headers: {
-      ...(authHeader ? { Authorization: authHeader } : {}),
-      ...(body ? { "Content-Type": "application/json" } : undefined),
-    },
+    headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const parsed = await parseResponse<ApiResponse<T>>(response);
-  return parsed.data!;
 }
 
 export function fetchBottles(): Promise<Bottle[]> {
@@ -813,7 +761,7 @@ export async function createExpenseCategory(
   return apiSend<ExpenseCategory>("/api/expenses/categories", "POST", input);
 }
 
-export function fetchExpenses(params?: {
+export async function fetchExpenses(params?: {
   page?: number;
   pageSize?: number;
   category?: string;
@@ -824,33 +772,23 @@ export function fetchExpenses(params?: {
   if (params?.category) query.set("category", params.category);
 
   const qs = query.toString();
-  return fetch(
-    `${API_BASE_URL}/api/expenses${qs ? `?${qs}` : ""}`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
+  const response = await apiRequest<
+    ApiResponse<ExpenseRecord[]> & {
+      pagination?: Paginated<ExpenseRecord>["pagination"];
     }
-  ).then(async (response) => {
-    if (response.status === 401) {
-      throw new ApiError("Session expired. Please log in again.", 401);
-    }
-    const body = await parseResponse<
-      ApiResponse<ExpenseRecord[]> & {
-        pagination?: Paginated<ExpenseRecord>["pagination"];
-      }
-    >(response);
-    const data = body.data ?? [];
-    return {
-      data,
-      pagination: body.pagination ?? {
-        page: params?.page ?? 1,
-        pageSize: params?.pageSize ?? 20,
-        total: data.length,
-        totalPages: 1,
-      },
-    };
-  });
+  >(`/api/expenses${qs ? `?${qs}` : ""}`, { method: "GET" });
+
+  const data = response.data ?? [];
+  const pagination = response.pagination ?? {
+    page: (new URLSearchParams(window.location.search)).get("page")
+      ? Number(new URLSearchParams(window.location.search).get("page"))
+      : 1,
+    pageSize: 20,
+    total: response.data?.length ?? 0,
+    totalPages: 1,
+  };
+
+  return { data: response.data ?? [], pagination };
 }
 
 export function createExpense(input: CreateExpenseInput): Promise<ExpenseRecord> {
@@ -951,20 +889,7 @@ export async function fetchPaginatedLabels(params?: {
 }> {
   const page = params?.page ?? 1;
   const limit = params?.limit ?? 10;
-  const response = await fetch(
-    `${API_BASE_URL}/api/inventory/labels?page=${page}&limit=${limit}`,
-    {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    }
-  );
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<
+  const response = await apiRequest<
     ApiResponse<Label[]> & {
       pagination?: {
         page: number;
@@ -974,15 +899,15 @@ export async function fetchPaginatedLabels(params?: {
         hasMore: boolean;
       };
     }
-  >(response);
+  >(`/api/inventory/labels?page=${page}&limit=${limit}`, { method: "GET" });
 
-  const data = body.data ?? [];
+  const data = response.data ?? [];
   return {
     data,
-    pagination: body.pagination ?? {
+    pagination: response.pagination ?? {
       page,
       limit,
-      total: data.length,
+      total: (response.data ?? []).length,
       totalPages: 1,
       hasMore: false,
     },
@@ -1178,7 +1103,7 @@ export function fetchOrder(id: string): Promise<OrderResponse> {
   return apiGet<OrderResponse>(`/api/orders/${id}`);
 }
 
-export function fetchOrdersPaginated(
+export async function fetchOrdersPaginated(
   params: FetchOrdersParams = {}
 ): Promise<OrdersListResult> {
   const query = new URLSearchParams();
@@ -1190,43 +1115,33 @@ export function fetchOrdersPaginated(
   const qs = query.toString();
   const url = qs ? `/api/orders/paginated?${qs}` : "/api/orders/paginated";
 
-  return fetch(`${API_BASE_URL}${url}`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  }).then(async (response) => {
-    if (response.status === 401) {
-      throw new ApiError("Session expired. Please log in again.", 401);
+  const response = await apiRequest<
+    ApiResponse<OrderResponse[]> & {
+      pagination?: OrderPagination;
+      summary?: OrderSummary;
     }
+  >(url, { method: "GET" });
 
-    const body = await parseResponse<
-      ApiResponse<OrderResponse[]> & {
-        pagination?: OrderPagination;
-        summary?: OrderSummary;
-      }
-    >(response);
-
-    const data = body.data ?? [];
-    return {
-      data,
-      pagination:
-        body.pagination ?? {
-          page: params?.page ?? 1,
-          limit: params?.limit ?? 10,
-          total: data.length,
-          totalPages: 1,
-          hasMore: false,
-        },
-      summary:
-        body.summary ?? {
-          total: 0,
-          pending: 0,
-          processing: 0,
-          completed: 0,
-          cancelled: 0,
-        },
-    };
-  });
+  const data = response.data ?? [];
+  return {
+    data,
+    pagination:
+      response.pagination ?? {
+        page: params?.page ?? 1,
+        limit: params?.limit ?? 10,
+        total: (response.data ?? []).length,
+        totalPages: 1,
+        hasMore: false,
+      },
+    summary:
+      response.summary ?? {
+        total: 0,
+        pending: 0,
+        processing: 0,
+        completed: 0,
+        cancelled: 0,
+      },
+  };
 }
 
 export function createOrder(input: CreateOrderInput): Promise<OrderResponse> {
@@ -1304,24 +1219,15 @@ export async function fetchMockups(params?: {
 }): Promise<{ data: MockupGallery[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> {
   const page = params?.page ?? 1;
   const pageSize = params?.pageSize ?? 20;
-  const response = await fetch(
-    `${API_BASE_URL}/api/mockups?page=${page}&pageSize=${pageSize}`,
-    { method: "GET", credentials: "include", cache: "no-store" }
-  );
-
-  if (response.status === 401) {
-    throw new ApiError("Session expired. Please log in again.", 401);
-  }
-
-  const body = await parseResponse<
+  const response = await apiRequest<
     ApiResponse<MockupGallery[]> & {
       pagination: { page: number; pageSize: number; total: number; totalPages: number };
     }
-  >(response);
+  >(`/api/mockups?page=${page}&pageSize=${pageSize}`, { method: "GET" });
 
   return {
-    data: body.data ?? [],
-    pagination: body.pagination ?? { page, pageSize, total: 0, totalPages: 0 },
+    data: response.data ?? [],
+    pagination: response.pagination ?? { page, pageSize, total: 0, totalPages: 0 },
   };
 }
 
