@@ -38,23 +38,28 @@ async function apiRequest<T>(
     ...(options.headers as Record<string, string> | undefined),
   };
 
-  const response = await fetch(`${API_BASE_URL}${url}`, {
-    ...options,
-    headers,
-    cache: "no-store",
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}${url}`, {
+      ...options,
+      headers,
+      cache: "no-store",
+    });
 
-  if (response.status === 401) {
-    handleUnauthorized();
-    throw new ApiError("Session expired. Please log in again.", 401);
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new ApiError("Session expired. Please log in again.", 401);
+    }
+
+    const body = await parseResponse<ApiResponse<T>>(response);
+    return body.data!;
+  } catch (error) {
+    console.error(`[API Error] ${options.method || "GET"} ${API_BASE_URL}${url}:`, error);
+    throw error;
   }
-
-  const body = await parseResponse<ApiResponse<T>>(response);
-  return body.data!;
 }
 
 export const API_BASE_URL = (
-  process.env.API_URL ?? "http://localhost:5000"
+  process.env.NEXT_PUBLIC_API_URL ?? "https://purely-backend.vercel.app"
 ).replace(/\/+$/, "");
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
