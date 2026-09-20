@@ -8,9 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AlertCircle, CheckCircle2, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, X } from "lucide-react";
 
-type ToastType = "success" | "error";
+type ToastType = "success" | "warning" | "error";
 
 interface ToastItem {
   id: string;
@@ -20,6 +20,7 @@ interface ToastItem {
 
 interface ToastApi {
   success: (message: string) => void;
+  warning: (message: string) => void;
   error: (message: string) => void;
 }
 
@@ -61,6 +62,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const api = useRef<ToastApi>({
     success: (message: string) => show("success", message),
+    warning: (message: string) => show("warning", message),
     error: (message: string) => show("error", message),
   });
 
@@ -70,16 +72,31 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className="pointer-events-none fixed right-4 top-20 z-[100] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2">
         {toasts.map((toast) => {
           const isSuccess = toast.type === "success";
+          const isWarning = toast.type === "warning";
           return (
             <div
               key={toast.id}
-              className={`pointer-events-auto flex items-start gap-3 overflow-hidden rounded-2xl border p-4 shadow-[0_16px_48px_rgba(15,23,42,0.16)] ${isSuccess ? "border-emerald-300/60 bg-white dark:border-emerald-500/30 dark:bg-[#0F172A]" : "border-red-300/60 bg-white dark:border-red-500/30 dark:bg-[#0F172A]"}`}
+              className={`pointer-events-auto flex items-start gap-3 overflow-hidden rounded-2xl border p-4 shadow-[0_16px_48px_rgba(15,23,42,0.16)] ${
+                isSuccess
+                  ? "border-emerald-300/60 bg-white dark:border-emerald-500/30 dark:bg-[#0F172A]"
+                  : isWarning
+                    ? "border-amber-300/60 bg-white dark:border-amber-500/30 dark:bg-[#0F172A]"
+                    : "border-red-300/60 bg-white dark:border-red-500/30 dark:bg-[#0F172A]"
+              }`}
             >
               <span
-                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${isSuccess ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" : "bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400"}`}
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${
+                  isSuccess
+                    ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
+                    : isWarning
+                      ? "bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
+                      : "bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400"
+                }`}
               >
                 {isSuccess ? (
                   <CheckCircle2 className="h-4 w-4" />
+                ) : isWarning ? (
+                  <AlertTriangle className="h-4 w-4" />
                 ) : (
                   <AlertCircle className="h-4 w-4" />
                 )}

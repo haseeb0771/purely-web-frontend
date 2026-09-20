@@ -24,6 +24,7 @@ import {
   fetchAuditLogs,
   type AuditLogEntry,
 } from "@/lib/admin-api";
+import { subscribeAdminActivity } from "@/lib/admin-socket";
 
 const ACTION_STYLES: Record<AuditLogEntry["action"], string> = {
   CREATE:
@@ -59,7 +60,7 @@ const FRIENDLY_KEYS: Record<string, string> = {
   quantity: "Qty",
   qty: "Qty",
   totalCostPrice: "Total Cost",
-  unitCostPrice: "Unit Cost",
+  unitCostPrice: "Cost per Piece",
   color: "Color",
   name: "Name",
   type: "Type",
@@ -472,6 +473,19 @@ export default function ActivityLogsPage() {
   useEffect(() => {
     void load(1);
   }, [load]);
+
+  useEffect(() => {
+    return subscribeAdminActivity((payload) => {
+      const record = (payload ?? {}) as { log?: AuditLogEntry };
+      if (!record.log) return;
+      const entry = record.log;
+      setLogs((prev) => {
+        if (prev.some((existing) => existing.id === entry.id)) return prev;
+        return [entry, ...prev];
+      });
+      setTotal((count) => count + 1);
+    });
+  }, []);
 
   function handleApply() {
     void load(1);

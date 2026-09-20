@@ -2,197 +2,86 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  AlertTriangle,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  Clock,
-  Loader2,
-  Package,
-  X,
-} from "lucide-react";
+import { Loader2, Plus, Send, X } from "lucide-react";
 import AdminPage from "@/components/admin/AdminPage";
+import DatePicker from "@/components/admin/DatePicker";
 import NumberInput from "@/components/admin/NumberInput";
-import SelectDropdown from "@/components/admin/SelectDropdown";
+import SelectDropdown, {
+  type SelectOption,
+} from "@/components/admin/SelectDropdown";
 import { useToast } from "@/components/admin/toast";
 import {
-  ApiError,
-  BOTTLE_SIZES,
-  uploadBottleImage,
-  fetchBottlesBySizes,
-  fetchAvailableCaps,
-  fetchPaginatedLabels,
-  fetchAvailablePetPackaging,
-  createLabel,
+  createMarketingClient,
   createOrder,
+  fetchAvailableCaps,
+  fetchAvailablePetPackaging,
+  fetchBottlesBySizesPaginated,
+  fetchMarketingClients,
+  fetchPaginatedLabels,
   type Bottle,
   type BottleSize,
   type Cap,
   type Label,
+  type MarketingClient,
   type PetPackaging,
-  type SizeQuantity,
 } from "@/lib/admin-api";
 
-const inputClass =
-  "w-full rounded-xl border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] px-3.5 py-2.5 text-sm text-[#0F172A] dark:text-white placeholder-[#94A3B8] outline-none transition-colors focus:border-[#2FB9BF] focus:bg-white dark:focus:bg-[#1a2332] focus:ring-2 focus:ring-[#2FB9BF]/20";
+const BOTTLE_SIZES: BottleSize[] = ["300ml", "500ml", "1500ml", "19L"];
 
-const PET_PACK_CONFIG: Record<string, number> = {
+// One PET pack contains these many bottles per size.
+const BOTTLES_PER_PET: Record<string, number> = {
   "300ml": 12,
   "500ml": 12,
   "1500ml": 6,
   "19L": 1,
 };
 
-function toDateInputValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate()
-  )}`;
+const LITERS_PER_SIZE: Record<string, number> = {
+  "300ml": 0.3,
+  "500ml": 0.5,
+  "1500ml": 1.5,
+  "19L": 19,
+};
+
+const BOTTLE_PAGE_SIZE = 15;
+
+const WATER_COST_PER_LITER_DEFAULT = 2.5;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
-function DeliveryDatePicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => setDraft(value), [value, open]);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const applyPreset = (daysOffset: number) => {
-    const now = new Date();
-    const target = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate() + daysOffset
-    );
-    onChange(toDateInputValue(target));
-    setOpen(false);
-  };
-
-  const display = value
-    ? new Date(`${value}T00:00:00`).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-    : "Delivery date";
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={`inline-flex h-10 w-full items-center gap-2 rounded-xl border bg-white px-3 text-sm font-medium transition-colors hover:border-[#2FB9BF]/50 dark:bg-[#0F172A] ${
-          value
-            ? "border-[#2FB9BF]/60 text-[#0F172A] dark:text-white"
-            : "border-[#E2E8F0] text-[#94A3B8] dark:border-[#334155]"
-        }`}
-      >
-        <CalendarDays className="h-4 w-4 shrink-0 text-[#2FB9BF]" />
-        <span className="flex-1 truncate text-left">{display}</span>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-[#94A3B8] transition-transform ${
-            open ? "rotate-180" : ""
-          }`}
-        />
-      </button>
-
-      {value && (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          title="Clear delivery date"
-          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#E2E8F0] text-[#475569] hover:bg-red-100 hover:text-red-600 dark:bg-[#1E293B] dark:text-[#94A3B8] dark:hover:bg-red-500/10 dark:hover:text-red-400"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-
-      {open && (
-        <div className="absolute left-0 top-full z-40 mt-2 w-80 rounded-2xl border border-[#E2E8F0] bg-white p-4 shadow-[0_16px_48px_rgba(15,23,42,0.14)] dark:border-[#1E293B] dark:bg-[#0F172A] dark:shadow-none">
-          <p className="mb-3 text-sm font-bold text-[#0F172A] dark:text-white">
-            Delivery date
-          </p>
-
-          <div className="mb-4 grid grid-cols-4 gap-1.5">
-            {[
-              { label: "Today", days: 0 },
-              { label: "+3 days", days: 3 },
-              { label: "+7 days", days: 7 },
-              { label: "+30 days", days: 30 },
-            ].map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => applyPreset(preset.days)}
-                className="rounded-lg border border-[#E2E8F0] px-2 py-1.5 text-xs font-semibold text-[#475569] transition-colors hover:border-[#2FB9BF] hover:text-[#2FB9BF] dark:border-[#334155] dark:text-[#94A3B8]"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-
-          <label className="block">
-            <span className="mb-1 flex items-center gap-1 text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
-              <Clock className="h-3.5 w-3.5" /> Pick date
-            </span>
-            <input
-              type="date"
-              value={draft}
-              min={toDateInputValue(new Date())}
-              onChange={(e) => setDraft(e.target.value)}
-              className="w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] outline-none transition-colors focus:border-[#2FB9BF] focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white"
-            />
-          </label>
-
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                onChange(draft);
-                setOpen(false);
-              }}
-              className="inline-flex h-9 flex-1 items-center justify-center rounded-lg bg-[#2FB9BF] px-3 text-sm font-semibold text-white transition-colors hover:bg-[#0BAEC4]"
-            >
-              Apply
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onChange("");
-                setOpen(false);
-              }}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#E2E8F0] px-3 text-sm font-semibold text-[#475569] transition-colors hover:border-[#2FB9BF]/50 dark:border-[#334155] dark:text-[#94A3B8]"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+// The intake-frozen per-piece cost is authoritative; only derive from
+// total ÷ quantity when the stored value is missing so costs never inflate as
+// stock is drawn down.
+function resolveUnitCost(
+  stored?: number,
+  total?: number,
+  quantity?: number
+): number {
+  const storedValue = Number(stored) || 0;
+  if (storedValue > 0) return storedValue;
+  const qty = Number(quantity) || 0;
+  return qty > 0 ? (Number(total) || 0) / qty : 0;
 }
 
-function SectionCard({
+function rs(n: number): string {
+  return `Rs. ${(Number.isFinite(n) ? n : 0).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function num(n: number): string {
+  return (Number.isFinite(n) ? n : 0).toLocaleString();
+}
+
+const inputClass =
+  "w-full rounded-xl border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#0F172A] px-3.5 py-2.5 text-sm text-[#0F172A] dark:text-white placeholder-[#94A3B8] outline-none transition-colors focus:border-[#2FB9BF] focus:bg-white dark:focus:bg-[#1a2332] focus:ring-2 focus:ring-[#2FB9BF]/20";
+
+const invalidClass =
+  "!border-red-400 !ring-2 !ring-red-400/25 focus:!border-red-500 focus:!ring-red-500/25 dark:!border-red-500/60";
+
+function Section({
   number,
   title,
   description,
@@ -204,20 +93,20 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-[0_2px_12px_rgba(15,23,42,0.04)] dark:border-[#1E293B] dark:bg-[#0F172A] dark:shadow-none">
+    <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 dark:border-[#1E293B] dark:bg-[#0F172A]">
       <div className="mb-5 flex items-center gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#2FB9BF] text-sm font-bold text-white">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2FB9BF] text-sm font-bold text-white">
           {number}
         </span>
         <div>
-          <h3 className="text-base font-semibold text-[#0F172A] dark:text-white">
+          <h2 className="text-base font-bold text-[#0F172A] dark:text-white">
             {title}
-          </h3>
-          {description && (
-            <p className="mt-0.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+          </h2>
+          {description ? (
+            <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
               {description}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
       {children}
@@ -225,216 +114,240 @@ function SectionCard({
   );
 }
 
+function Field({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-4">
+      <div className="mb-1.5 flex items-baseline gap-1.5">
+        <span className="text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+          {label}
+        </span>
+        {required ? <span className="text-xs text-red-500">*</span> : null}
+        {hint ? (
+          <span className="ml-auto text-[11px] text-[#94A3B8]">{hint}</span>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+interface SizeBottleState {
+  bottleId: string;
+  petCount: number;
+}
+
+interface PetRowState {
+  petPackagingId: string;
+  quantity: number;
+}
+
+function daysFromToday(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}`;
+}
+
+function isoToInputDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}`;
+}
+
 export default function CreateOrderPage() {
   const router = useRouter();
   const toast = useToast();
 
+  /* ---------- Client info ---------- */
   const [businessName, setBusinessName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerPhone, setOwnerPhone] = useState("");
   const [ownerWhatsapp, setOwnerWhatsapp] = useState("");
-  const [isWhatsappSame, setIsWhatsappSame] = useState(false);
+  const [whatsappSame, setWhatsappSame] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
+  const [nextOrderReminderAt, setNextOrderReminderAt] = useState("");
 
+  /* ---------- Bottles (per size) ---------- */
   const [selectedSizes, setSelectedSizes] = useState<BottleSize[]>([]);
-  const [bottles, setBottles] = useState<Bottle[]>([]);
-  const [bottleId, setBottleId] = useState("");
-  const [loadingBottles, setLoadingBottles] = useState(false);
-  const [sizeQuantities, setSizeQuantities] = useState<
+  const [bottlesBySize, setBottlesBySize] = useState<
+    Record<BottleSize, Bottle[]>
+  >({} as Record<BottleSize, Bottle[]>);
+  const [loadingBottles, setLoadingBottles] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [loadingMoreBottles, setLoadingMoreBottles] = useState<
+    Record<string, boolean>
+  >({});
+  const [bottlePageBySize, setBottlePageBySize] = useState<
     Record<string, number>
   >({});
-  const [qtyMode, setQtyMode] = useState<"bottle" | "pet">("bottle");
-  const [petPacksBySize, setPetPacksBySize] = useState<Record<string, number>>(
-    {},
-  );
+  const [bottleHasMoreBySize, setBottleHasMoreBySize] = useState<
+    Record<string, boolean>
+  >({});
+  const [sizeBottles, setSizeBottles] = useState<
+    Record<BottleSize, SizeBottleState>
+  >({} as Record<BottleSize, SizeBottleState>);
 
+  /* ---------- Caps ---------- */
   const [caps, setCaps] = useState<Cap[]>([]);
-  const [capId, setCapId] = useState("");
   const [loadingCaps, setLoadingCaps] = useState(true);
+  const [capId, setCapId] = useState("");
+  const [capQty, setCapQty] = useState(0);
+  const [capQtyTouched, setCapQtyTouched] = useState(false);
 
-  const [labelId, setLabelId] = useState("");
+  /* ---------- Labels ---------- */
   const [labels, setLabels] = useState<Label[]>([]);
   const [labelPage, setLabelPage] = useState(1);
   const [labelHasMore, setLabelHasMore] = useState(false);
   const [loadingLabels, setLoadingLabels] = useState(false);
-  const [showAddLabelModal, setShowAddLabelModal] = useState(false);
-  const bottleDropdownRef = useRef<HTMLDivElement>(null);
-  const [bottleDropdownOpen, setBottleDropdownOpen] = useState(false);
+  const [labelId, setLabelId] = useState("");
+  const [labelQuantities, setLabelQuantities] = useState<
+    Record<BottleSize, number>
+  >({} as Record<BottleSize, number>);
+  const [labelQtyTouched, setLabelQtyTouched] = useState(false);
 
+  /* ---------- PET packaging ---------- */
   const [petItems, setPetItems] = useState<PetPackaging[]>([]);
-  const [selectedPets, setSelectedPets] = useState<
-    { id: string; quantity: number }[]
-  >([]);
   const [loadingPets, setLoadingPets] = useState(true);
-
-  const [submitting, setSubmitting] = useState(false);
-  const [globalError, setGlobalError] = useState<string | null>(null);
-  const [sellingPrice, setSellingPrice] = useState<number>(0);
-
-  const effectiveQuantities: Record<string, number> =
-    qtyMode === "pet"
-      ? Object.fromEntries(
-          selectedSizes.map((s) => [
-            s,
-            (petPacksBySize[s] ?? 1) * (PET_PACK_CONFIG[s] ?? 0),
-          ]),
-        )
-      : sizeQuantities;
-
-  const totalBottleQty = selectedSizes.reduce(
-    (sum, size) => sum + (effectiveQuantities[size] ?? 0),
-    0,
+  const [petBySize, setPetBySize] = useState<Record<BottleSize, PetRowState>>(
+    {} as Record<BottleSize, PetRowState>
+  );
+  const [petQtyTouched, setPetQtyTouched] = useState<Record<string, boolean>>(
+    {}
   );
 
-  const petTotalsBySize: Record<string, number> =
-    qtyMode === "pet"
-      ? Object.fromEntries(
-          selectedSizes
-            .map((s) => [
-              s,
-              (petPacksBySize[s] ?? 1) * (PET_PACK_CONFIG[s] ?? 0),
-            ])
-            .filter(([, q]) => (q as number) > 0),
-        )
-      : Object.fromEntries(
-          petItems
-            .map((item) => [
-              item.size,
-              selectedPets
-                .filter((p) => p.id === item._id)
-                .reduce((sum, p) => sum + p.quantity, 0),
-            ])
-            .filter(([, q]) => (q as number) > 0),
-        );
+  /* ---------- Billing ---------- */
+  const [waterRate, setWaterRate] = useState(WATER_COST_PER_LITER_DEFAULT);
+  const [sellPerPET, setSellPerPET] = useState<Record<BottleSize, number>>({} as Record<BottleSize, number>);
 
-  const selectedBottle = bottles.find((b) => b._id === bottleId) ?? null;
-  const selectedCap = caps.find((c) => c._id === capId) ?? null;
-  const selectedLabel = labels.find((l) => l._id === labelId) ?? null;
+  /* ---------- Advance payment ---------- */
+  const [advanceAmount, setAdvanceAmount] = useState(0);
+  const [advanceMethod, setAdvanceMethod] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
 
-  const costBreakdown = useMemo(() => {
-    let bottlesCost = 0;
-    let capsCost = 0;
-    let labelsCost = 0;
-    let petCost = 0;
-    const petItemsCost: {
-      size: string;
-      unitCost: number;
-      quantity: number;
-      lineCost: number;
-    }[] = [];
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    if (selectedBottle) {
-      for (const size of selectedSizes) {
-        const qty = effectiveQuantities[size] ?? 0;
-        const detail = selectedBottle.sizeDetails.find((d) => d.size === size);
-        if (detail) bottlesCost += (detail.unitCostPrice ?? 0) * qty;
-      }
-    }
-    if (selectedCap && selectedCap.totalQuantity > 0) {
-      const capUnitCost = selectedCap.totalCostPrice / selectedCap.totalQuantity;
-      capsCost = capUnitCost * totalBottleQty;
-    }
-    if (selectedLabel) {
-      for (const size of selectedSizes) {
-        const qty = effectiveQuantities[size] ?? 0;
-        const detail = selectedLabel.sizeDetails.find((d) => d.size === size);
-        if (detail) labelsCost += (detail.unitCostPrice ?? 0) * qty;
-      }
-    }
-    for (const pet of selectedPets) {
-      const item = petItems.find((p) => p._id === pet.id);
-      if (item && item.quantity > 0) {
-        const unitCost = item.totalCostPrice / item.quantity;
-        const lineCost = unitCost * pet.quantity;
-        petCost += lineCost;
-        petItemsCost.push({
-          size: item.size,
-          unitCost: Math.round(unitCost * 100) / 100,
-          quantity: pet.quantity,
-          lineCost: Math.round(lineCost * 100) / 100,
-        });
-      }
-    }
+  /* ---------- Marketing client (auto-population) ---------- */
+  const [clientId, setClientId] = useState("");
+  const [clients, setClients] = useState<MarketingClient[]>([]);
+  const [loadingClients, setLoadingClients] = useState(true);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddBusiness, setQuickAddBusiness] = useState("");
+  const [quickAddOwner, setQuickAddOwner] = useState("");
+  const [quickAddPhone, setQuickAddPhone] = useState("");
+  const [quickAddWhatsapp, setQuickAddWhatsapp] = useState("");
+  const [quickAddSame, setQuickAddSame] = useState(false);
+  const [quickAddSaving, setQuickAddSaving] = useState(false);
+  const [quickAddError, setQuickAddError] = useState<string | null>(null);
 
-    const total = bottlesCost + capsCost + labelsCost + petCost;
-    const totalPETUnits = selectedPets.reduce(
-      (sum, p) => sum + p.quantity,
-      0,
+  /** Fields that are locked because the selected client already provides them. */
+  const [clientLocks, setClientLocks] = useState({
+    businessName: false,
+    ownerName: false,
+    ownerPhone: false,
+    ownerWhatsapp: false,
+  });
+  const [invalid, setInvalid] = useState<string[]>([]);
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const registerField = useCallback(
+    (key: string) => (el: HTMLElement | null) => {
+      fieldRefs.current[key] = el;
+    },
+    []
+  );
+
+  const clearInvalid = useCallback((key: string) => {
+    setInvalid((prev) =>
+      prev.includes(key) ? prev.filter((entry) => entry !== key) : prev
     );
-    const rounded = (n: number) => Math.round(n * 100) / 100;
-
-    return {
-      bottlesCost: rounded(bottlesCost),
-      capsCost: rounded(capsCost),
-      labelsCost: rounded(labelsCost),
-      petCost: rounded(petCost),
-      total: rounded(total),
-      totalBottleQty,
-      totalPETUnits,
-      bottleAvgUnitCost:
-        totalBottleQty > 0 ? rounded(bottlesCost / totalBottleQty) : 0,
-      capUnitCost:
-        totalBottleQty > 0 ? rounded(capsCost / totalBottleQty) : 0,
-      labelAvgUnitCost:
-        totalBottleQty > 0 ? rounded(labelsCost / totalBottleQty) : 0,
-      componentCostPerBottle:
-        totalBottleQty > 0
-          ? rounded((bottlesCost + capsCost + labelsCost) / totalBottleQty)
-          : 0,
-      petItemsCost,
-    };
-  }, [selectedBottle, selectedCap, selectedLabel, selectedSizes, effectiveQuantities, selectedPets, petItems, totalBottleQty]);
-
-  const toggleSize = useCallback((size: BottleSize) => {
-    setSelectedSizes((prev) => {
-      const next = prev.includes(size)
-        ? prev.filter((s) => s !== size)
-        : [...prev, size];
-      return next;
-    });
-    setBottleId("");
-    setSizeQuantities({});
   }, []);
 
-  useEffect(() => {
-    if (selectedSizes.length === 0) {
-      setBottles([]);
-      return;
+  /* ==================== Derived helpers ==================== */
+
+  const bottleCountOf = useCallback(
+    (size: BottleSize): number =>
+      (sizeBottles[size]?.petCount ?? 0) * (BOTTLES_PER_PET[size] ?? 0),
+    [sizeBottles]
+  );
+
+  const selectedCap = useMemo(
+    () => caps.find((cap) => cap._id === capId) ?? null,
+    [caps, capId]
+  );
+
+  const selectedLabel = useMemo(
+    () => labels.find((label) => label._id === labelId) ?? null,
+    [labels, labelId]
+  );
+
+  const labelSupportedSizes = useMemo(() => {
+    const supported = new Set<BottleSize>();
+    for (const size of selectedSizes) {
+      if (
+        selectedLabel?.sizeDetails.some((detail) => detail.size === size)
+      ) {
+        supported.add(size);
+      }
     }
-    let cancelled = false;
-    setLoadingBottles(true);
-    void fetchBottlesBySizes(selectedSizes)
-      .then((data) => {
-        if (cancelled) return;
-        setBottles(data ?? []);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setBottles([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoadingBottles(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedSizes]);
+    return [...supported];
+  }, [selectedLabel, selectedSizes]);
+
+  const petOptionsFor = useCallback(
+    (size: BottleSize): PetPackaging[] =>
+      petItems.filter((item) =>
+        item.sizeDetails?.some((detail) => detail.size === size)
+          ? true
+          : item.size === size
+      ),
+    [petItems]
+  );
+
+  const totalBottleQty = useMemo(
+    () =>
+      selectedSizes.reduce((sum, size) => sum + bottleCountOf(size), 0),
+    [selectedSizes, bottleCountOf]
+  );
+
+  const totalPetPacks = useMemo(
+    () =>
+      selectedSizes.reduce(
+        (sum, size) => sum + (petBySize[size]?.quantity ?? 0),
+        0
+      ),
+    [selectedSizes, petBySize]
+  );
+
+  /* ==================== Data loading ==================== */
 
   useEffect(() => {
     let cancelled = false;
     setLoadingCaps(true);
-    void fetchAvailableCaps()
+    fetchAvailableCaps()
       .then((data) => {
-        if (cancelled) return;
-        setCaps(data ?? []);
+        if (!cancelled) setCaps(data ?? []);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (!cancelled) setCaps([]);
       })
       .finally(() => {
-        if (cancelled) return;
-        setLoadingCaps(false);
+        if (!cancelled) setLoadingCaps(false);
       });
     return () => {
       cancelled = true;
@@ -444,40 +357,35 @@ export default function CreateOrderPage() {
   useEffect(() => {
     let cancelled = false;
     setLoadingPets(true);
-    void fetchAvailablePetPackaging()
+    fetchAvailablePetPackaging()
       .then((data) => {
-        if (cancelled) return;
-        setPetItems(data ?? []);
+        if (!cancelled) setPetItems(data ?? []);
       })
       .catch(() => {
-        if (cancelled) return;
+        if (!cancelled) setPetItems([]);
       })
       .finally(() => {
-        if (cancelled) return;
-        setLoadingPets(false);
+        if (!cancelled) setLoadingPets(false);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const loadLabelsPage = useCallback(
-    async (page: number, append: boolean) => {
-      setLoadingLabels(true);
-      try {
-        const result = await fetchPaginatedLabels({ page, limit: 10 });
-        setLabels((prev) =>
-          append ? [...prev, ...result.data] : result.data,
-        );
-        setLabelHasMore(result.pagination.hasMore);
-      } catch {
-        if (!append) setLabels([]);
-      } finally {
-        setLoadingLabels(false);
-      }
-    },
-    [],
-  );
+  const loadLabelsPage = useCallback(async (page: number, append: boolean) => {
+    setLoadingLabels(true);
+    try {
+      const result = await fetchPaginatedLabels({ page, limit: 50 });
+      setLabels((prev) =>
+        append ? [...prev, ...(result?.data ?? [])] : (result?.data ?? [])
+      );
+      setLabelHasMore(result?.pagination?.hasMore ?? false);
+    } catch {
+      if (!append) setLabels([]);
+    } finally {
+      setLoadingLabels(false);
+    }
+  }, []);
 
   useEffect(() => {
     setLabels([]);
@@ -485,1306 +393,1681 @@ export default function CreateOrderPage() {
     void loadLabelsPage(1, false);
   }, [loadLabelsPage]);
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (
-        bottleDropdownRef.current &&
-        !bottleDropdownRef.current.contains(e.target as Node)
-      ) {
-        setBottleDropdownOpen(false);
-      }
+  const loadMoreLabels = useCallback(() => {
+    if (!labelHasMore || loadingLabels) return;
+    const next = labelPage + 1;
+    setLabelPage(next);
+    void loadLabelsPage(next, true);
+  }, [labelHasMore, loadingLabels, labelPage, loadLabelsPage]);
+
+  /* ==================== Marketing clients ==================== */
+
+  const loadClients = useCallback(async () => {
+    setLoadingClients(true);
+    try {
+      const data = await fetchMarketingClients();
+      setClients(data ?? []);
+    } catch {
+      setClients([]);
+    } finally {
+      setLoadingClients(false);
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  function loadMoreLabels() {
-    if (!labelHasMore || loadingLabels) return;
-    const nextPage = labelPage + 1;
-    setLabelPage(nextPage);
-    void loadLabelsPage(nextPage, true);
-  }
+  useEffect(() => {
+    void loadClients();
+  }, [loadClients]);
 
-  function handleLabelCreated(created: Label) {
-    setLabels((prev) => [created, ...prev]);
-    setLabelId(created._id);
-    setShowAddLabelModal(false);
-    toast.success(`Label "${created.name}" added to inventory.`);
-  }
+  const clientOptions: SelectOption[] = useMemo(
+    () =>
+      clients.map((client) => ({
+        label: client.businessName,
+        value: client._id,
+      })),
+    [clients]
+  );
 
-  function togglePetItem(itemId: string) {
-    setSelectedPets((prev) => {
-      const exists = prev.find((p) => p.id === itemId);
-      if (exists) return prev.filter((p) => p.id !== itemId);
-      return [...prev, { id: itemId, quantity: 1 }];
-    });
-  }
+  const selectedClient = useMemo(
+    () => clients.find((client) => client._id === clientId) ?? null,
+    [clients, clientId]
+  );
 
-  function updatePetQuantity(itemId: string, quantity: number) {
-    setSelectedPets((prev) =>
-      prev.map((p) => (p.id === itemId ? { ...p, quantity } : p)),
-    );
-  }
-
-  function validate(): string | null {
-    if (!businessName.trim()) return "Business name is required.";
-    if (!ownerName.trim()) return "Owner name is required.";
-    if (!ownerPhone.trim()) return "Phone number is required.";
-    if (!isWhatsappSame && !ownerWhatsapp.trim())
-      return "WhatsApp number is required.";
-    if (selectedSizes.length === 0) return "Select at least one bottle size.";
-    if (!bottleId) return "Select a bottle.";
-    if (qtyMode === "pet") {
-      for (const size of selectedSizes) {
-        if ((petPacksBySize[size] ?? 1) < 1)
-          return `Enter the number of PET packs for ${size}.`;
+  const handleSelectClient = useCallback(
+    (id: string) => {
+      const client = clients.find((c) => c._id === id);
+      if (!client) return;
+      const phone = client.phone ?? "";
+      const whatsapp = client.whatsapp ?? "";
+      setClientId(client._id);
+      setBusinessName(client.businessName ?? "");
+      setOwnerName(client.ownerName ?? "");
+      setOwnerPhone(phone);
+      setOwnerWhatsapp(whatsapp);
+      setWhatsappSame(Boolean(whatsapp) && whatsapp === phone);
+      setClientLocks({
+        businessName: Boolean((client.businessName ?? "").trim()),
+        ownerName: Boolean((client.ownerName ?? "").trim()),
+        ownerPhone: Boolean(phone.trim()),
+        ownerWhatsapp: Boolean(whatsapp.trim()),
+      });
+      if (client.dealStatus === "DEAL_CLOSED_WON") {
+        const existingReminder = client.nextOrderReminderAt
+          ? isoToInputDate(client.nextOrderReminderAt)
+          : "";
+        setNextOrderReminderAt(existingReminder || daysFromToday(14));
       }
-    }
-    for (const size of selectedSizes) {
-      const qty = effectiveQuantities[size] ?? 0;
-      if (qty < 1)
-        return `Enter a quantity for ${size} bottles.`;
-    }
-    if (!capId) return "Select a cap.";
-    if (!labelId) return "Select a label from inventory.";
-    for (const pet of selectedPets) {
-      if (pet.quantity < 1)
-        return `Enter a quantity for the selected PET packaging.`;
-    }
-    return null;
-  }
+    },
+    [clients]
+  );
 
-  async function handleSubmit() {
-    const error = validate();
-    if (error) {
-      toast.error(error);
+  // Preselect the marketing client when arriving from the client's
+  // "Place New Order" follow-up action (/admin/orders/create?client=<id>).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const preselectedId = params.get("client");
+    if (!preselectedId || clientId) return;
+    const client = clients.find((c) => c._id === preselectedId);
+    if (client) handleSelectClient(client._id);
+  }, [clients, clientId, handleSelectClient]);
+
+  const openQuickAdd = useCallback(() => {
+    setQuickAddBusiness("");
+    setQuickAddOwner("");
+    setQuickAddPhone("");
+    setQuickAddWhatsapp("");
+    setQuickAddSame(false);
+    setQuickAddError(null);
+    setQuickAddOpen(true);
+  }, []);
+
+  const handleQuickAdd = useCallback(async () => {
+    const business = quickAddBusiness.trim();
+    if (!business) {
+      setQuickAddError("Business name is required.");
       return;
     }
+    setQuickAddSaving(true);
+    setQuickAddError(null);
+    try {
+      const created = await createMarketingClient({
+        businessName: business,
+        ownerName: quickAddOwner.trim() || undefined,
+        phone: quickAddPhone.trim() || undefined,
+        whatsapp:
+          (quickAddSame ? quickAddPhone.trim() : quickAddWhatsapp.trim()) ||
+          undefined,
+        dealStatus: "PENDING_VISIT",
+      });
+      setClients((prev) => [created, ...prev]);
+      const phone = created.phone ?? "";
+      const whatsapp = created.whatsapp ?? "";
+      setClientId(created._id);
+      setBusinessName(created.businessName ?? "");
+      setOwnerName(created.ownerName ?? "");
+      setOwnerPhone(phone);
+      setOwnerWhatsapp(whatsapp);
+      setWhatsappSame(Boolean(whatsapp) && whatsapp === phone);
+      setClientLocks({
+        businessName: Boolean((created.businessName ?? "").trim()),
+        ownerName: Boolean((created.ownerName ?? "").trim()),
+        ownerPhone: Boolean(phone.trim()),
+        ownerWhatsapp: Boolean(whatsapp.trim()),
+      });
+      setQuickAddOpen(false);
+      toast.success(`Client "${created.businessName}" added and selected.`);
+    } catch (err) {
+      setQuickAddError(
+        err instanceof Error ? err.message : "Failed to add client."
+      );
+    } finally {
+      setQuickAddSaving(false);
+    }
+  }, [
+    quickAddBusiness,
+    quickAddOwner,
+    quickAddPhone,
+    quickAddWhatsapp,
+    quickAddSame,
+    toast,
+  ]);
 
+  /* ==================== Selection actions ==================== */
+
+  const toggleSize = useCallback(
+    (size: BottleSize) => {
+      setSelectedSizes((prev) => {
+        const active = prev.includes(size);
+        if (active) return prev.filter((s) => s !== size);
+        return [...prev, size];
+      });
+    },
+    []
+  );
+
+  // Fetch the available bottles for a newly selected size (paginated).
+  const loadBottlesPage = useCallback(
+    async (size: BottleSize, page: number, append: boolean) => {
+      if (append) {
+        setLoadingMoreBottles((prev) => ({ ...prev, [size]: true }));
+      } else {
+        setLoadingBottles((prev) => ({ ...prev, [size]: true }));
+      }
+      try {
+        const result = await fetchBottlesBySizesPaginated(
+          [size],
+          page,
+          BOTTLE_PAGE_SIZE
+        );
+        const pageData = result?.data ?? [];
+        setBottlesBySize((prev) => {
+          const existing = prev[size] ?? [];
+          const merged = append ? [...existing, ...pageData] : pageData;
+          const seen = new Set<string>();
+          const unique: Bottle[] = [];
+          for (const b of merged) {
+            if (seen.has(b._id)) continue;
+            seen.add(b._id);
+            unique.push(b);
+          }
+          return { ...prev, [size]: unique };
+        });
+        setBottleHasMoreBySize((prev) => ({
+          ...prev,
+          [size]: result?.hasMore ?? false,
+        }));
+        setBottlePageBySize((prev) => ({ ...prev, [size]: page }));
+        if (!append) {
+          const inStock = pageData.find((b) =>
+            b.sizeDetails.some((d) => d.size === size && d.quantity > 0)
+          );
+          setSizeBottles((prev) =>
+            prev[size]?.bottleId
+              ? prev
+              : {
+                  ...prev,
+                  [size]: {
+                    bottleId: inStock?._id ?? pageData[0]?._id ?? "",
+                    petCount: 1,
+                  },
+                }
+          );
+        }
+      } catch {
+        if (!append) setBottlesBySize((prev) => ({ ...prev, [size]: [] }));
+      } finally {
+        if (append) {
+          setLoadingMoreBottles((prev) => ({ ...prev, [size]: false }));
+        } else {
+          setLoadingBottles((prev) => ({ ...prev, [size]: false }));
+        }
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    for (const size of selectedSizes) {
+      if (bottlesBySize[size] || loadingBottles[size]) continue;
+      void loadBottlesPage(size, 1, false);
+    }
+  }, [selectedSizes, bottlesBySize, loadingBottles, loadBottlesPage]);
+
+  const loadMoreBottles = useCallback(
+    (size: BottleSize) => {
+      if (
+        !bottleHasMoreBySize[size] ||
+        loadingMoreBottles[size] ||
+        loadingBottles[size]
+      )
+        return;
+      const next = (bottlePageBySize[size] ?? 1) + 1;
+      void loadBottlesPage(size, next, true);
+    },
+    [
+      bottleHasMoreBySize,
+      loadingMoreBottles,
+      loadingBottles,
+      bottlePageBySize,
+      loadBottlesPage,
+    ]
+  );
+
+  const updateSizeBottleId = useCallback((size: BottleSize, bottleId: string) => {
+    setSizeBottles((prev) => ({ ...prev, [size]: { ...prev[size], bottleId } }));
+  }, []);
+
+  const updatePetCount = useCallback(
+    (size: BottleSize, petCount: number) => {
+      setSizeBottles((prev) => ({ ...prev, [size]: { ...prev[size], petCount } }));
+      // Auto-match PET packaging quantity to the PET count (unless edited).
+      if (!petQtyTouched[size]) {
+        setPetBySize((prev) =>
+          prev[size]
+            ? { ...prev, [size]: { ...prev[size], quantity: petCount } }
+            : prev
+        );
+      }
+    },
+    [petQtyTouched]
+  );
+
+  // Auto-create a PET packaging row for every selected size.
+  useEffect(() => {
+    if (petItems.length === 0) return;
+    setPetBySize((prev) => {
+      let next = prev;
+      for (const size of selectedSizes) {
+        if (next[size]) continue;
+        const candidate = petOptionsFor(size)[0];
+        if (!candidate) {
+          next = { ...next, [size]: { petPackagingId: "", quantity: 0 } };
+          continue;
+        }
+        next = {
+          ...next,
+          [size]: {
+            petPackagingId: candidate._id,
+            quantity: sizeBottles[size]?.petCount ?? 1,
+          },
+        };
+      }
+      return next;
+    });
+  }, [selectedSizes, petItems, petOptionsFor, sizeBottles]);
+
+  const updatePetRow = useCallback(
+    (size: BottleSize, patch: Partial<PetRowState>) => {
+      setPetBySize((prev) => ({ ...prev, [size]: { ...prev[size], ...patch } }));
+    },
+    []
+  );
+
+  const togglePetQtyTouched = useCallback((size: BottleSize) => {
+    setPetQtyTouched((prev) => ({ ...prev, [size]: true }));
+  }, []);
+
+  const selectCap = useCallback(
+    (id: string) => {
+      setCapId(id);
+      setCapQty(totalBottleQty);
+    },
+    [totalBottleQty]
+  );
+
+  // Keep cap quantity auto-matched to total bottles until manually edited.
+  useEffect(() => {
+    if (capId && !capQtyTouched) setCapQty(totalBottleQty);
+  }, [totalBottleQty, capId, capQtyTouched]);
+
+  const selectLabel = useCallback(
+    (id: string) => {
+      setLabelId(id);
+      const label = labels.find((l) => l._id === id);
+      setLabelQtyTouched(false);
+      if (label) {
+        const quantities = {} as Record<BottleSize, number>;
+        for (const size of selectedSizes) {
+          quantities[size] = label.sizeDetails.some(
+            (detail) => detail.size === size
+          )
+            ? bottleCountOf(size)
+            : 0;
+        }
+        setLabelQuantities(quantities);
+      }
+    },
+    [labels, selectedSizes, bottleCountOf]
+  );
+
+  // Auto-match label quantities to bottle counts when sizes/bottles change.
+  useEffect(() => {
+    if (!labelId || labelQtyTouched) return;
+    const quantities = {} as Record<BottleSize, number>;
+    for (const size of selectedSizes) {
+      quantities[size] = labelSupportedSizes.includes(size)
+        ? bottleCountOf(size)
+        : 0;
+    }
+    setLabelQuantities(quantities);
+  }, [labelId, selectedSizes, bottleCountOf, labelSupportedSizes, labelQtyTouched]);
+
+  const toggleSizeRemoval = useCallback(
+    (size: BottleSize) => {
+      setSelectedSizes((prev) => prev.filter((s) => s !== size));
+    },
+    []
+  );
+
+  /* ==================== Billing (mirrors backend pricing) ==================== */
+
+  const billing = useMemo(() => {
+    const capUnitCost = selectedCap
+      ? resolveUnitCost(
+          selectedCap.unitCostPrice,
+          selectedCap.totalCostPrice,
+          selectedCap.totalQuantity
+        )
+      : 0;
+
+    const lines = selectedSizes.map((size) => {
+      const bottle = (bottlesBySize[size] ?? []).find(
+        (b) => b._id === sizeBottles[size]?.bottleId
+      );
+      const bottleDetail = bottle?.sizeDetails.find((d) => d.size === size);
+      const bottleCostPerUnit = resolveUnitCost(
+        bottleDetail?.unitCostPrice,
+        bottleDetail?.totalCostPrice,
+        bottleDetail?.quantity
+      );
+
+      const labelDetail = selectedLabel?.sizeDetails.find(
+        (d) => d.size === size
+      );
+      const labelCostPerUnit = resolveUnitCost(
+        labelDetail?.unitCostPrice,
+        labelDetail?.totalCostPrice,
+        labelDetail?.quantity
+      );
+      const labelQty = labelQuantities[size] ?? 0;
+
+      const petRow = petBySize[size];
+      const petItem = petItems.find((p) => p._id === petRow?.petPackagingId);
+      const petDetail = petItem?.sizeDetails?.find((d) => d.size === size);
+      const petUnitCost = petItem
+        ? petDetail
+          ? resolveUnitCost(
+              petDetail.unitCostPrice,
+              petDetail.totalCostPrice,
+              petDetail.quantity
+            )
+          : resolveUnitCost(
+              petItem.unitCostPrice,
+              petItem.totalCostPrice,
+              petItem.quantity
+            )
+        : 0;
+
+      const petCount = sizeBottles[size]?.petCount ?? 0;
+      const bottleCount = bottleCountOf(size);
+      const bottlesPerPET = BOTTLES_PER_PET[size] ?? 1;
+      const waterCostPerBottle = round2(
+        (LITERS_PER_SIZE[size] ?? 0) * waterRate
+      );
+
+      const bottleCostAmount = round2(bottleCostPerUnit * bottleCount);
+      const capCostAmount = round2(capUnitCost * bottleCount);
+      const labelCostAmount = round2(labelCostPerUnit * labelQty);
+      const petPackCostAmount = round2(petUnitCost * petCount);
+      const waterCostAmount = round2(waterCostPerBottle * bottleCount);
+
+      const costPerUnit = round2(
+        bottleCostPerUnit + capUnitCost + labelCostPerUnit
+      );
+      const costPerBottle = round2(costPerUnit + waterCostPerBottle);
+      const costPerPET = round2(
+        costPerBottle * bottlesPerPET + (petCount > 0 ? petUnitCost : 0)
+      );
+      const costAmount = round2(
+        bottleCostAmount +
+          capCostAmount +
+          labelCostAmount +
+          petPackCostAmount +
+          waterCostAmount
+      );
+
+      const sell = Number(sellPerPET[size] ?? 0);
+      const sellAmount = round2(sell * petCount);
+
+      return {
+        size,
+        bottleName: bottle?.bottleName ?? "",
+        petCount,
+        bottleCount,
+        bottlesPerPET,
+        bottleCostPerUnit,
+        capCostPerUnit: capUnitCost,
+        labelCostPerUnit,
+        petUnitCost,
+        waterCostPerBottle,
+        bottleCostAmount,
+        capCostAmount,
+        labelCostAmount,
+        petPackCostAmount,
+        waterCostAmount,
+        costPerBottle,
+        costPerPET,
+        costAmount,
+        sell,
+        sellAmount,
+        hasPet: Boolean(petRow?.petPackagingId),
+      };
+    });
+
+    const totalBottles = round2(
+      lines.reduce((sum, l) => sum + l.bottleCostAmount, 0)
+    );
+    const totalCaps = round2(
+      lines.reduce((sum, l) => sum + l.capCostAmount, 0)
+    );
+    const totalLabels = round2(
+      lines.reduce((sum, l) => sum + l.labelCostAmount, 0)
+    );
+    const totalPet = round2(
+      lines.reduce((sum, l) => sum + l.petPackCostAmount, 0)
+    );
+    const totalWater = round2(
+      lines.reduce((sum, l) => sum + l.waterCostAmount, 0)
+    );
+    const totalCost = round2(
+      totalBottles + totalCaps + totalLabels + totalPet + totalWater
+    );
+    const totalSell = round2(
+      lines.reduce((sum, l) => sum + l.sellAmount, 0)
+    );
+    const profit = round2(totalSell - totalCost);
+
+    return {
+      lines,
+      totals: {
+        bottles: totalBottles,
+        caps: totalCaps,
+        labels: totalLabels,
+        pet: totalPet,
+        water: totalWater,
+        cost: totalCost,
+        sell: totalSell,
+        profit,
+      },
+    };
+  }, [
+    selectedSizes,
+    bottlesBySize,
+    sizeBottles,
+    bottleCountOf,
+    selectedCap,
+    selectedLabel,
+    labelQuantities,
+    petBySize,
+    petItems,
+    waterRate,
+    sellPerPET,
+  ]);
+
+  /* ==================== Submit ==================== */
+
+  const collectErrors = useCallback((): { key: string; message: string }[] => {
+    const errors: { key: string; message: string }[] = [];
+    if (!businessName.trim())
+      errors.push({ key: "businessName", message: "Business name is required." });
+    if (!ownerName.trim())
+      errors.push({ key: "ownerName", message: "Owner name is required." });
+    if (!ownerPhone.trim())
+      errors.push({ key: "ownerPhone", message: "Phone number is required." });
+    if (!whatsappSame && !ownerWhatsapp.trim())
+      errors.push({
+        key: "ownerWhatsapp",
+        message: "WhatsApp number is required.",
+      });
+    if (!deliveryDate)
+      errors.push({
+        key: "deliveryDate",
+        message: "Delivery / dispatch date is required.",
+      });
+    if (selectedSizes.length === 0)
+      errors.push({
+        key: "selectedSizes",
+        message: "Select at least one bottle size.",
+      });
+    for (const size of selectedSizes) {
+      if (!sizeBottles[size]?.bottleId)
+        errors.push({
+          key: `bottle-${size}`,
+          message: `Select a bottle for ${size}.`,
+        });
+      if ((sizeBottles[size]?.petCount ?? 0) < 1)
+        errors.push({
+          key: `pet-${size}`,
+          message: `Enter the PET pack count for ${size}.`,
+        });
+    }
+    if (!capId)
+      errors.push({ key: "capId", message: "Select a cap." });
+    if (capQty < 1)
+      errors.push({ key: "capQty", message: "Enter the cap quantity." });
+    if (!labelId)
+      errors.push({
+        key: "labelId",
+        message: "Select a label from inventory.",
+      });
+    for (const size of selectedSizes) {
+      const sell = Number(sellPerPET[size]);
+      if (!Number.isFinite(sell) || sell <= 0)
+        errors.push({
+          key: `sell-${size}`,
+          message: `Enter the selling price per PET for ${size}.`,
+        });
+    }
+    if (advanceAmount > billing.totals.sell)
+      errors.push({
+        key: "advanceAmount",
+        message: "Advance payment cannot exceed the total selling price.",
+      });
+    return errors;
+  }, [
+    businessName,
+    ownerName,
+    ownerPhone,
+    whatsappSame,
+    ownerWhatsapp,
+    deliveryDate,
+    selectedSizes,
+    sizeBottles,
+    capId,
+    capQty,
+    labelId,
+    sellPerPET,
+    advanceAmount,
+    billing,
+  ]);
+
+  const handleSubmit = useCallback(async () => {
+    const errors = collectErrors();
+    if (errors.length > 0) {
+      setInvalid(errors.map((entry) => entry.key));
+      setError(errors[0].message);
+      toast.error("Please fill all required fields.");
+      const target = fieldRefs.current[errors[0].key];
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          target.focus({ preventScroll: true });
+        }
+      }
+      return;
+    }
+    setInvalid([]);
     setSubmitting(true);
-    setGlobalError(null);
-
-    const sizeQtyArray: SizeQuantity[] = selectedSizes.map((size) => ({
+    setError(null);
+    const labelSizeQuantities = labelSupportedSizes.map((size) => ({
       size,
-      quantity: effectiveQuantities[size] ?? 0,
+      quantity: labelQuantities[size] ?? bottleCountOf(size),
     }));
-
+    const petSelections = selectedSizes
+      .filter((size) => petBySize[size]?.petPackagingId)
+      .map((size) => ({
+        petPackagingId: petBySize[size].petPackagingId,
+        size,
+        quantity: petBySize[size].quantity,
+      }));
     try {
       await createOrder({
+        clientId: clientId || null,
         clientDetails: {
           businessName: businessName.trim(),
           ownerName: ownerName.trim(),
           ownerPhone: ownerPhone.trim(),
-          ownerWhatsapp: isWhatsappSame
-            ? ownerPhone.trim()
-            : ownerWhatsapp.trim(),
-          isWhatsappSameAsPhone: isWhatsappSame,
+          ownerWhatsapp: whatsappSame ? ownerPhone.trim() : ownerWhatsapp.trim(),
+          isWhatsappSameAsPhone: whatsappSame,
         },
         bottleSelection: {
           sizes: selectedSizes,
-          bottleId,
-          sizeQuantities: sizeQtyArray,
+          sizeBottles: selectedSizes.map((size) => ({
+            size,
+            bottleId: sizeBottles[size].bottleId,
+            petCount: sizeBottles[size].petCount,
+            bottleCount: bottleCountOf(size),
+          })),
         },
-        capSelection: {
-          capId,
-          quantity: totalBottleQty,
-        },
+        capSelection: { capId, quantity: capQty },
         labelSelection: {
           type: "EXISTING_INVENTORY",
           labelId,
+          sizeQuantities: labelSizeQuantities,
         },
-        petPackagingSelection: selectedPets.map((pet) => ({
-          petPackagingId: pet.id,
-          size: petItems.find((p) => p._id === pet.id)?.size ?? "",
-          quantity: pet.quantity,
-        })),
+        petPackagingSelection: petSelections,
         deliveryDate: deliveryDate || undefined,
-        sellingPrice,
+        nextOrderReminderAt: nextOrderReminderAt || undefined,
+        sellingPrice: billing.totals.sell,
+        priceMode: "PER_PET",
+        unitPrice: totalPetPacks > 0
+          ? Math.round((billing.totals.sell / totalPetPacks) * 100) / 100
+          : 0,
+        waterRate,
+        sellPerPET: Object.fromEntries(
+          selectedSizes.map((size) => [size, Number(sellPerPET[size]) || 0])
+        ) as unknown as Record<BottleSize, number>,
+        advancePayment:
+          advanceAmount > 0
+            ? {
+                amount: Number(advanceAmount) || 0,
+                method: advanceMethod.trim() || undefined,
+                note: advanceNote.trim() || undefined,
+              }
+            : undefined,
       });
-
-      toast.success("Order created successfully! Stock has been deducted.");
+      toast.success("Order created successfully. Stock has been deducted.");
       router.push("/admin/orders");
     } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Failed to create order.";
-      setGlobalError(msg);
-      toast.error(msg);
+      setError(
+        err instanceof Error ? err.message : "Failed to create the order."
+      );
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [
+    collectErrors,
+    clientId,
+    businessName,
+    ownerName,
+    ownerPhone,
+    whatsappSame,
+    ownerWhatsapp,
+    selectedSizes,
+    sizeBottles,
+    bottleCountOf,
+    capId,
+    capQty,
+    labelId,
+    labelSupportedSizes,
+    labelQuantities,
+    petBySize,
+    deliveryDate,
+    nextOrderReminderAt,
+    billing,
+    waterRate,
+    sellPerPET,
+    totalPetPacks,
+    advanceAmount,
+    advanceMethod,
+    advanceNote,
+    router,
+    toast,
+  ]);
+
+  /* ==================== Render ==================== */
 
   return (
     <AdminPage
       title="Create Order"
-      description="Create a new order with full inventory validation and stock deduction."
+      description="Build an order PET pack by PET pack — one bottle, cap, label and packaging price per size."
     >
-      <div className="space-y-5 p-4 sm:p-6">
-        {globalError && (
-          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-red-500" />
-            <p className="text-sm font-medium text-red-700 dark:text-red-400">
-              {globalError}
-            </p>
-            <button
-              type="button"
-              onClick={() => setGlobalError(null)}
-              className="ml-auto text-red-400 hover:text-red-600"
-            >
-              &times;
-            </button>
+      <div className="p-6">
+        {error ? (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+            {error}
           </div>
-        )}
+        ) : null}
 
-        <SectionCard number={1} title="Client Information">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Business Name *
-              </label>
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* ① Client Information */}
+          <Section
+            number={1}
+            title="Client Information"
+            description="Select a marketing client — their details auto-fill below."
+          >
+            <Field
+              label="Marketing Client"
+              required
+              hint={loadingClients ? "Loading clients…" : undefined}
+            >
+              <div className="flex items-stretch gap-2">
+                <div className="min-w-0 flex-1">
+                  <SelectDropdown
+                    value={clientId}
+                    options={clientOptions}
+                    onSelect={handleSelectClient}
+                    placeholder={
+                      loadingClients ? "Loading clients…" : "Select a client…"
+                    }
+                    searchable
+                    searchPlaceholder="Search by business, owner or phone…"
+                    actionLabel="Add new client"
+                    onAction={openQuickAdd}
+                    disabled={loadingClients}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={openQuickAdd}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#2FB9BF] bg-[#2FB9BF]/10 px-3.5 text-sm font-semibold text-[#0E7A80] transition-colors hover:bg-[#2FB9BF]/20 dark:text-[#5EEAD4]"
+                >
+                  <Plus className="h-4 w-4" />
+                  New
+                </button>
+              </div>
+            </Field>
+
+            {selectedClient ? (
+              <p className="-mt-2 mb-4 text-xs font-medium text-[#0E7A80] dark:text-[#5EEAD4]">
+                Auto-filled from {selectedClient.businessName}. Fill any missing
+                detail below for this order.
+              </p>
+            ) : null}
+
+            {selectedClient?.dealStatus === "DEAL_CLOSED_WON" && (
+              <Field
+                label="Next Order Reminder Date"
+                hint="Estimated re-order date for a repeat order."
+              >
+                {selectedClient.followUpStatus === "OVERDUE" && (
+                  <p className="mb-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:border-[#4C1D24] dark:bg-rose-900/20 dark:text-rose-200">
+                    This client&apos;s last re-order reminder is overdue — placing
+                    this order starts a fresh reminder cycle.
+                  </p>
+                )}
+                <DatePicker
+                  value={nextOrderReminderAt}
+                  onChange={setNextOrderReminderAt}
+                />
+              </Field>
+            )}
+
+            <Field label="Business Name" required>
               <input
-                type="text"
+                ref={registerField("businessName")}
+                className={`${inputClass} ${
+                  invalid.includes("businessName") ? invalidClass : ""
+                } ${
+                  clientLocks.businessName ? "cursor-default opacity-70" : ""
+                }`}
                 value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
+                onChange={(e) => {
+                  setBusinessName(e.target.value);
+                  clearInvalid("businessName");
+                }}
                 placeholder="e.g. Purely Waters"
-                className={inputClass}
+                readOnly={clientLocks.businessName}
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Owner Name *
-              </label>
+            </Field>
+            <Field label="Owner Name" required>
               <input
-                type="text"
+                ref={registerField("ownerName")}
+                className={`${inputClass} ${
+                  invalid.includes("ownerName") ? invalidClass : ""
+                } ${clientLocks.ownerName ? "cursor-default opacity-70" : ""}`}
                 value={ownerName}
-                onChange={(e) => setOwnerName(e.target.value)}
+                onChange={(e) => {
+                  setOwnerName(e.target.value);
+                  clearInvalid("ownerName");
+                }}
                 placeholder="e.g. John Doe"
-                className={inputClass}
+                readOnly={clientLocks.ownerName}
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Phone Number *
-              </label>
+            </Field>
+            <Field label="Phone Number" required>
               <input
-                type="tel"
+                ref={registerField("ownerPhone")}
+                className={`${inputClass} ${
+                  invalid.includes("ownerPhone") ? invalidClass : ""
+                } ${clientLocks.ownerPhone ? "cursor-default opacity-70" : ""}`}
                 value={ownerPhone}
                 onChange={(e) => {
                   setOwnerPhone(e.target.value);
-                  if (isWhatsappSame) setOwnerWhatsapp(e.target.value);
+                  if (whatsappSame) setOwnerWhatsapp(e.target.value);
+                  clearInvalid("ownerPhone");
+                  if (whatsappSame) clearInvalid("ownerWhatsapp");
                 }}
                 placeholder="+92 300 1234567"
-                className={inputClass}
+                readOnly={clientLocks.ownerPhone}
               />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                WhatsApp Number *
-              </label>
+            </Field>
+            <Field label="WhatsApp Number" required>
               <input
-                type="tel"
-                value={isWhatsappSame ? ownerPhone : ownerWhatsapp}
+                ref={registerField("ownerWhatsapp")}
+                className={`${inputClass} ${
+                  invalid.includes("ownerWhatsapp") ? invalidClass : ""
+                } ${
+                  clientLocks.ownerWhatsapp ? "cursor-default opacity-70" : ""
+                }`}
+                value={whatsappSame ? ownerPhone : ownerWhatsapp}
                 onChange={(e) => {
                   setOwnerWhatsapp(e.target.value);
-                  if (isWhatsappSame) setOwnerPhone(e.target.value);
+                  if (whatsappSame) setOwnerPhone(e.target.value);
+                  clearInvalid("ownerWhatsapp");
                 }}
-                disabled={isWhatsappSame}
                 placeholder="+92 300 1234567"
-                className={`${inputClass} ${isWhatsappSame ? "opacity-60" : ""}`}
+                readOnly={whatsappSame || clientLocks.ownerWhatsapp}
               />
-              <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                <input
-                  type="checkbox"
-                  checked={isWhatsappSame}
-                  onChange={(e) => {
-                    setIsWhatsappSame(e.target.checked);
-                    if (e.target.checked) setOwnerWhatsapp(ownerPhone);
-                  }}
-                  className="h-4 w-4 rounded border-[#CBD5E1] text-[#2FB9BF] focus:ring-[#2FB9BF]"
-                />
-                Same as Phone Number
-              </label>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Delivery / Dispatch Date
-              </label>
-              <DeliveryDatePicker value={deliveryDate} onChange={setDeliveryDate} />
-              <span className="mt-2 block text-xs text-[#94A3B8]">
-                When to deliver this order — helps track how much time is left.
-              </span>
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          number={2}
-          title="Bottle Selection"
-          description="Select sizes, then choose a bottle from available stock."
-        >
-          <div>
-            <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-              Select Bottle Sizes *
+            </Field>
+            <label className="mb-4 flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[#475569] dark:text-[#CBD5E1]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[#E2E8F0] text-[#2FB9BF] focus:ring-[#2FB9BF]/30"
+                checked={whatsappSame}
+                onChange={(e) => setWhatsappSame(e.target.checked)}
+              />
+              Same as phone number
             </label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {BOTTLE_SIZES.map((size) => {
-                const active = selectedSizes.includes(size);
-                return (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => toggleSize(size)}
-                    className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-all ${
-                      active
-                        ? "border-[#2FB9BF] bg-[#E6F7F8] text-[#0E7A80] ring-2 ring-[#2FB9BF]/30 dark:border-[#2FB9BF]/50 dark:bg-[#163A3B] dark:text-[#5EEAD4]"
-                        : "border-[#E2E8F0] bg-white text-[#475569] hover:border-[#2FB9BF]/50 dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-[#94A3B8] dark:hover:border-[#2FB9BF]/50"
-                    }`}
-                  >
-                    {active && <Check className="h-4 w-4" />}
-                    {size}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+            <Field label="Delivery / Dispatch Date" required>
+              <div
+                ref={registerField("deliveryDate")}
+                className={`rounded-xl ${
+                  invalid.includes("deliveryDate") ? "ring-2 ring-red-400/50" : ""
+                }`}
+              >
+                <DatePicker value={deliveryDate} onChange={setDeliveryDate} />
+              </div>
+            </Field>
+          </Section>
 
-          {selectedSizes.length > 0 && (
-            <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Choose Bottle *
-              </label>
-              {loadingBottles ? (
-                <div className="flex items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-                  <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
-                  <span className="text-sm text-[#94A3B8]">
-                    Finding bottles…
-                  </span>
-                </div>
-              ) : bottles.length === 0 ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
-                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-                    No bottles found with all selected sizes in stock.
-                  </p>
-                </div>
-              ) : (
-                <div className="relative" ref={bottleDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() => setBottleDropdownOpen((v) => !v)}
-                    className="flex w-full items-center justify-between rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 text-sm text-[#0F172A] outline-none transition-colors focus:border-[#2FB9BF] focus:bg-white focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white dark:focus:bg-[#0F172A]"
-                  >
-                    <span
-                      className={
-                        selectedBottle
-                          ? "text-[#0F172A] dark:text-white"
-                          : "text-[#94A3B8]"
-                      }
+          {/* ② Bottle Selection */}
+          <Section
+            number={2}
+            title="Bottle Selection"
+            description="Pick sizes, then choose a bottle and PET count for each size."
+          >
+            <Field label="Select Bottle Sizes" required>
+              <div
+                ref={registerField("selectedSizes")}
+                className={`flex flex-wrap gap-2 rounded-xl ${
+                  invalid.includes("selectedSizes")
+                    ? "p-1 ring-2 ring-red-400/50"
+                    : ""
+                }`}
+              >
+                {BOTTLE_SIZES.map((size) => {
+                  const active = selectedSizes.includes(size);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => toggleSize(size)}
+                      className={`inline-flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors ${
+                        active
+                          ? "border-[#2FB9BF] bg-[#2FB9BF]/10 text-[#0E7A80] dark:text-[#5EEAD4]"
+                          : "border-[#E2E8F0] bg-white text-[#64748B] hover:border-[#2FB9BF]/40 dark:border-[#334155] dark:bg-[#0F172A] dark:text-[#CBD5E1]"
+                      }`}
                     >
-                      {selectedBottle
-                        ? `${selectedBottle.bottleName} (${selectedBottle.customId})`
-                        : "Select a bottle…"}
-                    </span>
-                    <ChevronDown className="h-4 w-4 text-[#94A3B8]" />
-                  </button>
-                  {bottleDropdownOpen && (
-                    <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-auto rounded-xl border border-[#E2E8F0] bg-white py-1 shadow-lg dark:border-[#1E293B] dark:bg-[#0F172A]">
-                      {bottles.map((bottle) => {
-                        const isSelected = bottle._id === bottleId;
-                        return (
-                          <button
-                            key={bottle._id}
-                            type="button"
-                            onClick={() => {
-                              setBottleId(bottle._id);
-                              setSizeQuantities({});
-                              setBottleDropdownOpen(false);
-                            }}
-                            className={`flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-sm transition-colors ${
-                              isSelected
-                                ? "bg-[#F0FDFB] font-semibold text-[#0E7A80] dark:bg-[#163A3B] dark:text-[#5EEAD4]"
-                                : "text-[#334155] hover:bg-[#F8FAFC] dark:text-[#CBD5E1] dark:hover:bg-[#1E293B]"
-                            }`}
-                          >
-                            <span className="h-8 w-8 shrink-0 overflow-hidden rounded-lg bg-[#F1F5F9] dark:bg-[#1E293B]">
-                              {bottle.imageUrl && (
-                                <img
-                                  src={bottle.imageUrl}
-                                  alt=""
-                                  className="h-full w-full object-cover"
-                                />
-                              )}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-medium">
-                                {bottle.bottleName}
+                      {active ? <span>✓</span> : null}
+                      {size}
+                      <span className="text-[10px] font-semibold text-[#94A3B8]">
+                        {BOTTLES_PER_PET[size]} btl/pet
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            {selectedSizes.map((size) => {
+              const bottles = bottlesBySize[size] ?? [];
+              const sb = sizeBottles[size];
+              const bottle = bottles.find((b) => b._id === sb?.bottleId);
+              const detail = bottle?.sizeDetails.find((d) => d.size === size);
+              const bottleCount = bottleCountOf(size);
+              return (
+                <div
+                  key={size}
+                  className="mb-4 rounded-xl border border-[#E2E8F0] dark:border-[#1E293B] bg-[#F8FAFC] dark:bg-[#0B1220] p-4"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-lg bg-[#2FB9BF]/10 px-2.5 py-1 text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
+                        {size}
+                      </span>
+                      <span className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                        {bottleCount} bottles = {sb?.petCount ?? 0} PET ×{" "}
+                        {BOTTLES_PER_PET[size]}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleSizeRemoval(size)}
+                      aria-label={`Remove ${size}`}
+                      className="rounded-lg p-1.5 text-[#94A3B8] transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {loadingBottles[size] ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-3 text-sm text-[#94A3B8] dark:border-[#334155] dark:bg-[#0F172A]">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
+                      Finding bottles…
+                    </div>
+                  ) : bottles.length === 0 ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm font-medium text-amber-600 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
+                      No {size} bottles available in stock.
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div
+                        ref={registerField(`bottle-${size}`)}
+                        className={
+                          invalid.includes(`bottle-${size}`)
+                            ? "rounded-xl ring-2 ring-red-400/50"
+                            : ""
+                        }
+                      >
+                        <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                          Bottle
+                        </span>
+                        <SelectDropdown
+                          value={sb?.bottleId ?? ""}
+                          placeholder="Choose a bottle…"
+                          options={bottles.map((b) => ({
+                            value: b._id,
+                            label: `${b.bottleName} (${b.customId})`,
+                          }))}
+                          onSelect={(id) => updateSizeBottleId(size, id)}
+                          onReachEnd={() => loadMoreBottles(size)}
+                          loadingMore={!!loadingMoreBottles[size]}
+                          renderOption={(option, isSelected) => {
+                            const b = bottles.find(
+                              (item) => item._id === option.value
+                            );
+                            return (
+                              <span className="flex min-w-0 items-center gap-2.5">
+                                <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] dark:border-[#334155] dark:bg-[#0B1220]">
+                                  {b?.imageUrl ? (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                      src={b.imageUrl}
+                                      alt={b.bottleName}
+                                      className="h-full w-full object-contain"
+                                    />
+                                  ) : (
+                                    <span className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-[#94A3B8]">
+                                      —
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="min-w-0">
+                                  <span
+                                    className={`block truncate text-sm ${
+                                      isSelected
+                                        ? "font-semibold text-[#0E7A80] dark:text-[#5EEAD4]"
+                                        : "font-medium text-[#334155] dark:text-[#CBD5E1]"
+                                    }`}
+                                  >
+                                    {b?.bottleName ?? "(not loaded)"}
+                                  </span>
+                                  <span className="block truncate text-xs text-[#94A3B8]">
+                                    {b?.customId ?? option.value}
+                                  </span>
+                                </span>
                               </span>
-                              <span className="block text-xs text-[#94A3B8]">
-                                {bottle.customId} &middot; {bottle.type}
-                              </span>
-                            </span>
-                            {isSelected && (
-                              <Check className="h-4 w-4 shrink-0 text-[#2FB9BF]" />
-                            )}
-                          </button>
-                        );
-                      })}
+                            );
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                          PET count
+                        </span>
+                        <NumberInput
+                          value={sb?.petCount ?? 0}
+                          min={1}
+                          onValueChange={(n) => {
+                            updatePetCount(size, n);
+                            clearInvalid(`pet-${size}`);
+                          }}
+                          className={`${inputClass} ${
+                            invalid.includes(`pet-${size}`) ? invalidClass : ""
+                          }`}
+                        />
+                      </div>
                     </div>
                   )}
-                </div>
-              )}
-            </div>
-          )}
 
-          {selectedBottle && selectedSizes.length > 0 && (
-            <div className="mt-4">
-              <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                Quantity Mode *
-              </label>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setQtyMode("bottle")}
-                  className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all ${
-                    qtyMode === "bottle"
-                      ? "border-[#2FB9BF] bg-[#E6F7F8] text-[#0E7A80] ring-2 ring-[#2FB9BF]/30 dark:border-[#2FB9BF]/50 dark:bg-[#163A3B] dark:text-[#5EEAD4]"
-                      : "border-[#E2E8F0] bg-white text-[#475569] hover:border-[#2FB9BF]/50 dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-[#94A3B8]"
-                  }`}
-                >
-                  Bottle Wise
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQtyMode("pet")}
-                  className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all ${
-                    qtyMode === "pet"
-                      ? "border-[#2FB9BF] bg-[#E6F7F8] text-[#0E7A80] ring-2 ring-[#2FB9BF]/30 dark:border-[#2FB9BF]/50 dark:bg-[#163A3B] dark:text-[#5EEAD4]"
-                      : "border-[#E2E8F0] bg-white text-[#475569] hover:border-[#2FB9BF]/50 dark:border-[#1E293B] dark:bg-[#0F172A] dark:text-[#94A3B8]"
-                  }`}
-                >
-                  PET Wise
-                </button>
+                  {bottle ? (
+                    <p className="mt-2 text-[11px] text-[#94A3B8]">
+                      Bottle cost: {rs(resolveUnitCost(detail?.unitCostPrice, detail?.totalCostPrice, detail?.quantity))}/piece ·{" "}
+                      {num(detail?.quantity ?? 0)} in stock
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {selectedSizes.length === 0 ? (
+              <p className="text-sm text-[#94A3B8]">
+                No sizes selected yet — pick at least one size above.
+              </p>
+            ) : null}
+          </Section>
+
+          {/* ③ Cap Selection */}
+          <Section
+            number={3}
+            title="Cap Selection"
+            description="Quantity auto-matches the total bottle count — adjust if needed."
+          >
+            {loadingCaps ? (
+              <div className="flex items-center gap-2 text-sm text-[#94A3B8]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
+                Loading caps…
               </div>
-
-              {qtyMode === "pet" ? (
-                <div className="mt-4">
-                  <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                    PET Packs per Size *
-                  </label>
-                  <p className="mb-3 text-xs text-[#94A3B8]">
-                    Each PET pack contains: 500ml &times; 12 bottles, 1500ml
-                    &times; 6 bottles, 300ml &times; 12 bottles, 19L &times; 1.
-                  </p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {selectedSizes.map((size) => {
-                      const detail = selectedBottle.sizeDetails.find(
-                        (d) => d.size === size,
-                      );
-                      const available = detail?.quantity ?? 0;
-                      const packs = petPacksBySize[size] ?? 1;
-                      const computed = packs * (PET_PACK_CONFIG[size] ?? 0);
-                      const overStock = computed > available;
-                      return (
-                        <div
-                          key={size}
-                          className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${
-                            overStock
-                              ? "border-red-300 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10"
-                              : "border-[#E2E8F0] bg-[#F8FAFC] dark:border-[#334155] dark:bg-[#0F172A]"
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <span className="text-sm font-semibold text-[#0F172A] dark:text-white">
-                              {size}
-                            </span>
-                            <span className="ml-2 text-xs text-[#94A3B8]">
-                              {PET_PACK_CONFIG[size] ?? 0} bottles / pack
-                            </span>
-                            <span className="block truncate text-xs text-[#94A3B8]">
-                              ({available} available)
-                            </span>
-                          </div>
-                          <div className="flex flex-col items-end gap-1">
-                            <NumberInput
-                              value={packs}
-                              min={0}
-                              onValueChange={(val) =>
-                                setPetPacksBySize((prev) => ({
-                                  ...prev,
-                                  [size]: val,
-                                }))
-                              }
-                              placeholder="1"
-                              className="w-20 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-right text-sm font-semibold text-[#0F172A] outline-none focus:border-[#2FB9BF] focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white"
-                            />
-                            <span className="text-xs font-bold text-[#2FB9BF]">
-                              = {computed} bottles
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {totalBottleQty > 0 && (
-                    <p className="mt-2 text-right text-sm font-semibold text-[#0F172A] dark:text-white">
-                      Total Bottles:{" "}
-                      <span className="text-[#2FB9BF]">
-                        {totalBottleQty}
-                      </span>
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="mt-4">
-                  <label className="mb-2 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                    Quantity per Size *
-                  </label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {selectedSizes.map((size) => {
-                      const detail = selectedBottle.sizeDetails.find(
-                        (d) => d.size === size,
-                      );
-                      const available = detail?.quantity ?? 0;
-                      const currentQty = sizeQuantities[size] ?? 0;
-                      const overStock = currentQty > available;
-                      return (
-                        <div
-                          key={size}
-                          className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${
-                            overStock
-                              ? "border-red-300 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10"
-                              : "border-[#E2E8F0] bg-[#F8FAFC] dark:border-[#334155] dark:bg-[#0F172A]"
-                          }`}
-                        >
-                          <div>
-                            <span className="text-sm font-semibold text-[#0F172A] dark:text-white">
-                              {size}
-                            </span>
-                            <span className="ml-2 text-xs text-[#94A3B8]">
-                              ({available} available)
-                            </span>
-                          </div>
-                          <NumberInput
-                            value={currentQty}
-                            min={0}
-                            onValueChange={(val) =>
-                              setSizeQuantities((prev) => ({
-                                ...prev,
-                                [size]: val,
-                              }))
-                            }
-                            placeholder="0"
-                            className="w-24 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-right text-sm font-semibold text-[#0F172A] outline-none focus:border-[#2FB9BF] focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {totalBottleQty > 0 && (
-                    <p className="mt-2 text-right text-sm font-semibold text-[#0F172A] dark:text-white">
-                      Total Bottles:{" "}
-                      <span className="text-[#2FB9BF]">
-                        {totalBottleQty}
-                      </span>
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          number={3}
-          title="Cap Selection"
-          description="Select cap type. Quantity auto-matches total bottle count."
-        >
-          {loadingCaps ? (
-            <div className="flex items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-              <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
-              <span className="text-sm text-[#94A3B8]">Loading caps…</span>
-            </div>
-          ) : caps.length === 0 ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 dark:border-amber-500/30 dark:bg-amber-500/10">
-              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+            ) : caps.length === 0 ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm font-medium text-amber-600 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
                 No caps available in stock.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <SelectCapDropdown
-                caps={caps}
-                value={capId}
-                onSelect={setCapId}
-              />
-              {capId && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-                  <span className="text-sm font-semibold text-[#0F172A] dark:text-white">
-                    Cap Quantity
-                  </span>
-                  <span className="rounded-lg bg-[#E6F7F8] px-3 py-1 text-sm font-bold text-[#0E7A80] dark:bg-[#163A3B] dark:text-[#5EEAD4]">
-                    {totalBottleQty} pcs
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          number={4}
-          title="Label Selection"
-          description="Select a label from inventory. You can add a new label quickly from the dropdown if it is not listed yet."
-        >
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-              Select Label *
-            </label>
-            <SelectDropdown
-              value={labelId}
-              placeholder="Select a label…"
-              options={labels.map((label) => ({
-                label: label.name,
-                value: label._id,
-              }))}
-              onSelect={setLabelId}
-              actionLabel="+ Add New Label"
-              onAction={() => setShowAddLabelModal(true)}
-              onReachEnd={loadMoreLabels}
-              loadingMore={loadingLabels}
-            />
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          number={5}
-          title="PET Packaging (Optional)"
-          description="Select packaging trays/boxes and quantities needed."
-        >
-          {Object.entries(petTotalsBySize).length > 0 && (
-            <div className="mb-3 rounded-xl border border-[#2FB9BF]/30 bg-[#E6F7F8] px-3.5 py-2.5 dark:border-[#2FB9BF]/50 dark:bg-[#163A3B]">
-              <p className="text-xs font-semibold text-[#0E7A80] dark:text-[#5EEAD4]">
-                Total PET (size-wise)
-              </p>
-              <div className="mt-1.5 flex flex-wrap gap-2">
-                {Object.entries(petTotalsBySize).map(([size, qty]) => (
-                  <span
-                    key={size}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-[#0F172A] dark:bg-[#0F172A] dark:text-white"
-                  >
-                    {size}
-                    <span className="text-[#2FB9BF]">{qty}</span>
-                  </span>
-                ))}
               </div>
-            </div>
-          )}
-          {loadingPets ? (
-            <div className="flex items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-              <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
-              <span className="text-sm text-[#94A3B8]">
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div
+                  ref={registerField("capId")}
+                  className={
+                    invalid.includes("capId")
+                      ? "rounded-xl ring-2 ring-red-400/50"
+                      : ""
+                  }
+                >
+                  <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                    Cap
+                  </span>
+                  <SelectDropdown
+                    value={capId}
+                    placeholder="Select a cap…"
+                    options={caps.map((cap) => ({
+                      value: cap._id,
+                      label: `${cap.color} (${cap.customId})`,
+                    }))}
+                    onSelect={(id) => {
+                      selectCap(id);
+                      clearInvalid("capId");
+                    }}
+                  />
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                    Quantity
+                  </span>
+                  <NumberInput
+                    value={capQty}
+                    min={0}
+                    onValueChange={(n) => {
+                      setCapQtyTouched(true);
+                      setCapQty(n);
+                      clearInvalid("capQty");
+                    }}
+                    className={`${inputClass} ${
+                      invalid.includes("capQty") ? invalidClass : ""
+                    }`}
+                  />
+                </div>
+              </div>
+            )}
+            {selectedCap ? (
+              <p className="mt-2 text-[11px] text-[#94A3B8]">
+                Cap cost: {rs(resolveUnitCost(selectedCap.unitCostPrice, selectedCap.totalCostPrice, selectedCap.totalQuantity))}/piece · {num(selectedCap.totalQuantity)} in stock
+              </p>
+            ) : null}
+          </Section>
+
+          {/* ④ Label Selection */}
+          <Section
+            number={4}
+            title="Label Selection"
+            description="Per-size label quantities auto-match bottle counts for the sizes this label supports."
+          >
+            <Field label="Label from Inventory" required>
+              <div
+                ref={registerField("labelId")}
+                className={
+                  invalid.includes("labelId")
+                    ? "rounded-xl ring-2 ring-red-400/50"
+                    : ""
+                }
+              >
+                <SelectDropdown
+                  value={labelId}
+                  placeholder="Select a label…"
+                  options={labels.map((label) => ({
+                    value: label._id,
+                    label: `${label.name} (${label.customId})`,
+                  }))}
+                  onSelect={(id) => {
+                    selectLabel(id);
+                    clearInvalid("labelId");
+                  }}
+                  onReachEnd={loadMoreLabels}
+                  loadingMore={loadingLabels}
+                />
+              </div>
+            </Field>
+
+            {labelId && labelSupportedSizes.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {labelSupportedSizes.map((size) => {
+                  const detail = selectedLabel?.sizeDetails.find(
+                    (d) => d.size === size
+                  );
+                  return (
+                    <div key={size}>
+                      <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                        {size} labels
+                      </span>
+                      <NumberInput
+                        value={labelQuantities[size] ?? 0}
+                        min={0}
+                        onValueChange={(n) => {
+                          setLabelQtyTouched(true);
+                          setLabelQuantities((prev) => ({ ...prev, [size]: n }));
+                        }}
+                        className={inputClass}
+                      />
+                      <p className="mt-1 text-[11px] text-[#94A3B8]">
+                        {rs(resolveUnitCost(detail?.unitCostPrice, detail?.totalCostPrice, detail?.quantity))}/piece ·{" "}
+                        {num(detail?.quantity ?? 0)} in stock
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : labelId ? (
+              <p className="text-sm text-amber-500">
+                This label does not support any of the selected sizes.
+              </p>
+            ) : null}
+          </Section>
+
+          {/* ⑤ PET Packaging */}
+          <Section
+            number={5}
+            title="PET Packaging"
+            description="Rows auto-match the selected sizes; quantities equal the PET counts. Adjust freely."
+          >
+            {loadingPets ? (
+              <div className="flex items-center gap-2 text-sm text-[#94A3B8]">
+                <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
                 Loading PET packaging…
-              </span>
-            </div>
-          ) : petItems.length === 0 ? (
-            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 text-center dark:border-[#334155] dark:bg-[#0F172A]">
+              </div>
+            ) : petItems.length === 0 ? (
               <p className="text-sm text-[#94A3B8]">
                 No PET packaging items available.
               </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {petItems.map((item) => {
-                const selected = selectedPets.find(
-                  (p) => p.id === item._id,
+            ) : selectedSizes.length === 0 ? (
+              <p className="text-sm text-[#94A3B8]">
+                Select bottle sizes first — packaging rows will appear here.
+              </p>
+            ) : (
+              selectedSizes.map((size) => {
+                const row = petBySize[size];
+                const options = petOptionsFor(size);
+                const petItem = petItems.find(
+                  (p) => p._id === row?.petPackagingId
                 );
+                const detail = petItem?.sizeDetails?.find(
+                  (d) => d.size === size
+                );
+                const petUnitCost = petItem
+                  ? detail
+                    ? resolveUnitCost(
+                        detail.unitCostPrice,
+                        detail.totalCostPrice,
+                        detail.quantity
+                      )
+                    : resolveUnitCost(
+                        petItem.unitCostPrice,
+                        petItem.totalCostPrice,
+                        petItem.quantity
+                      )
+                  : 0;
                 return (
-                  <div key={item._id}>
-                    <button
-                      type="button"
-                      onClick={() => togglePetItem(item._id)}
-                      className={`flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left text-sm transition-all ${
-                        selected
-                          ? "border-[#2FB9BF] bg-[#E6F7F8] ring-1 ring-[#2FB9BF]/30 dark:border-[#2FB9BF]/50 dark:bg-[#163A3B]"
-                          : "border-[#E2E8F0] bg-white hover:border-[#2FB9BF]/50 dark:border-[#1E293B] dark:bg-[#0F172A]"
-                      }`}
-                    >
-                      <span
-                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
-                          selected
-                            ? "border-[#2FB9BF] bg-[#2FB9BF] text-white"
-                            : "border-[#CBD5E1] dark:border-[#334155]"
-                        }`}
-                      >
-                        {selected && <Check className="h-3.5 w-3.5" />}
+                  <div
+                    key={size}
+                    className="mb-3 rounded-xl border border-[#E2E8F0] dark:border-[#1E293B] bg-[#F8FAFC] dark:bg-[#0B1220] p-4"
+                  >
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="rounded-lg bg-[#2FB9BF]/10 px-2.5 py-1 text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
+                        {size}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-medium text-[#0F172A] dark:text-white">
-                          {item.size}
-                        </span>
-                        <span className="text-xs text-[#94A3B8]">
-                          {item.customId} &middot; {item.quantity} in stock
-                        </span>
+                      <span className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                        {num((detail?.quantity ?? petItem?.quantity) ?? 0)} in stock
                       </span>
-                    </button>
-                    {selected && (
-                      <div className="ml-8 mt-2 flex items-center gap-3">
-                        <span className="text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
-                          Quantity:
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                          Packaging item
+                        </span>
+                        <SelectDropdown
+                          value={row?.petPackagingId ?? ""}
+                          placeholder="Select packaging…"
+                          options={options.map((p) => ({
+                            value: p._id,
+                            label: `${p.customId}`,
+                          }))}
+                          onSelect={(id) => updatePetRow(size, { petPackagingId: id })}
+                        />
+                      </div>
+                      <div>
+                        <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                          Quantity
                         </span>
                         <NumberInput
-                          value={selected.quantity}
-                          min={1}
-                          onValueChange={(val) =>
-                            updatePetQuantity(item._id, val)
-                          }
-                          placeholder="1"
-                          className="w-24 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1.5 text-right text-sm font-semibold text-[#0F172A] outline-none focus:border-[#2FB9BF] focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white"
+                          value={row?.quantity ?? 0}
+                          min={0}
+                          onValueChange={(n) => {
+                            togglePetQtyTouched(size);
+                            updatePetRow(size, { quantity: n });
+                          }}
+                          className={inputClass}
                         />
-                        <span className="text-xs text-[#94A3B8]">
-                          / {item.quantity} available
-                        </span>
                       </div>
+                    </div>
+                    {row?.petPackagingId ? (
+                      <p className="mt-2 text-[11px] text-[#94A3B8]">
+                        Packaging cost: {rs(petUnitCost)}/PET pack
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-[11px] text-amber-500">
+                        No packaging matches this size yet.
+                      </p>
                     )}
                   </div>
                 );
-              })}
+              })
+            )}
+          </Section>
+        </div>
+
+        {/* ⑥ Billing */}
+        <div className="mt-6 rounded-2xl border border-[#E2E8F0] bg-white p-6 dark:border-[#1E293B] dark:bg-[#0F172A]">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2FB9BF] text-sm font-bold text-white">
+              6
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-[#0F172A] dark:text-white">
+                Billing & Selling Price
+              </h2>
+              <p className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                Cost per bottle and per PET pack, water cost, and the selling
+                price per PET for every size.
+              </p>
             </div>
-          )}
-        </SectionCard>
-
-        <div className="rounded-2xl border border-[#E2E8F0] bg-white p-5 shadow-[0_2px_12px_rgba(15,23,42,0.04)] dark:border-[#1E293B] dark:bg-[#0F172A] dark:shadow-none">
-          <h3 className="mb-4 text-base font-semibold text-[#0F172A] dark:text-white">
-            Order Summary
-          </h3>
-
-          <div className="space-y-2 text-sm">
-            {businessName && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Business
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {businessName}
-                </span>
-              </div>
-            )}
-            {ownerName && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Owner
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {ownerName}
-                </span>
-              </div>
-            )}
-            {selectedSizes.length > 0 && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Bottles
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {selectedBottle?.bottleName ?? "—"} &middot;{" "}
-                  {selectedSizes
-                    .map(
-                      (s) =>
-                        `${s}×${effectiveQuantities[s] ?? 0}`,
-                    )
-                    .join(", ")}
-                </span>
-              </div>
-            )}
-            {totalBottleQty > 0 && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Total Bottles
-                </span>
-                <span className="font-bold text-[#2FB9BF]">
-                  {totalBottleQty.toLocaleString("en-US")}
-                </span>
-              </div>
-            )}
-            {capId && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Cap
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {caps.find((c) => c._id === capId)?.color ?? "—"} ×{" "}
-                  {totalBottleQty.toLocaleString("en-US")}
-                </span>
-              </div>
-            )}
-            {labelId && (
-              <div className="flex justify-between">
-                <span className="text-[#64748B] dark:text-[#94A3B8]">
-                  Label
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {labels.find((l) => l._id === labelId)?.name ?? "—"}
-                </span>
-              </div>
-            )}
           </div>
 
-          {costBreakdown.total > 0 && (
-            <>
-              <div className="mt-5 border-t border-[#E2E8F0] dark:border-[#1E293B] pt-4">
-                <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">
-                  Cost Per Piece
-                </h4>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {costBreakdown.bottleAvgUnitCost > 0 && (
-                    <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8]">
-                        Per Bottle
-                      </p>
-                      <p className="mt-0.5 text-base font-extrabold text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.bottleAvgUnitCost.toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-                  {costBreakdown.capUnitCost > 0 && (
-                    <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8]">
-                        Per Cap
-                      </p>
-                      <p className="mt-0.5 text-base font-extrabold text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.capUnitCost.toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-                  {costBreakdown.labelAvgUnitCost > 0 && (
-                    <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 dark:border-[#334155] dark:bg-[#0F172A]">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8]">
-                        Per Label
-                      </p>
-                      <p className="mt-0.5 text-base font-extrabold text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.labelAvgUnitCost.toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-                  {costBreakdown.componentCostPerBottle > 0 && (
-                    <div className="rounded-xl border border-[#2FB9BF]/30 bg-[#2FB9BF]/5 px-3 py-2.5">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#0E7A80] dark:text-[#5EEAD4]">
-                        Complete Bottle
-                      </p>
-                      <p className="mt-0.5 text-base font-extrabold text-[#0E7A80] dark:text-[#5EEAD4]">
-                        Rs. {costBreakdown.componentCostPerBottle.toLocaleString()}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {costBreakdown.petItemsCost.length > 0 && (
-                  <div className="mt-3 space-y-1.5">
-                    {costBreakdown.petItemsCost.map((pet) => (
-                      <div
-                        key={pet.size}
-                        className="flex items-center justify-between rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 text-sm dark:border-[#334155] dark:bg-[#0F172A]"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">
-                            Per {pet.size} PET
-                          </span>
-                          <span className="font-extrabold text-[#0F172A] dark:text-white">
-                            Rs. {pet.unitCost.toLocaleString()}
-                          </span>
-                        </span>
-                        <span className="text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
-                          × {pet.quantity.toLocaleString("en-US")} = Rs. {pet.lineCost.toLocaleString()}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 border-t border-[#E2E8F0] dark:border-[#1E293B] pt-4">
-                <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">
-                  Order Totals
-                </h4>
-                <div className="space-y-1.5 text-sm">
-                  {costBreakdown.bottlesCost > 0 && (
-                    <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
-                      <span>
-                        Bottles · {costBreakdown.totalBottleQty.toLocaleString("en-US")} × Rs.{" "}
-                        {costBreakdown.bottleAvgUnitCost.toLocaleString()}
-                      </span>
-                      <span className="font-medium text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.bottlesCost.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {costBreakdown.capsCost > 0 && (
-                    <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
-                      <span>
-                        Caps · {costBreakdown.totalBottleQty.toLocaleString("en-US")} × Rs.{" "}
-                        {costBreakdown.capUnitCost.toLocaleString()}
-                      </span>
-                      <span className="font-medium text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.capsCost.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {costBreakdown.labelsCost > 0 && (
-                    <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
-                      <span>
-                        Labels · {costBreakdown.totalBottleQty.toLocaleString("en-US")} × Rs.{" "}
-                        {costBreakdown.labelAvgUnitCost.toLocaleString()}
-                      </span>
-                      <span className="font-medium text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.labelsCost.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {costBreakdown.petCost > 0 && (
-                    <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
-                      <span>
-                        PET Packaging · {costBreakdown.totalPETUnits.toLocaleString("en-US")} units
-                      </span>
-                      <span className="font-medium text-[#0F172A] dark:text-white">
-                        Rs. {costBreakdown.petCost.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between border-t border-[#E2E8F0] pt-1.5 dark:border-[#1E293B]">
-                    <span className="font-semibold text-[#0F172A] dark:text-white">
-                      Total Cost
-                    </span>
-                    <span className="font-bold text-[#0F172A] dark:text-white">
-                      Rs. {costBreakdown.total.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          <div className="mt-4 border-t border-[#E2E8F0] dark:border-[#1E293B] pt-4">
-            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">
-              Selling Price (PKR)
-            </label>
+          <div className="mb-5 max-w-xs">
+            <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+              Water rate (Rs / liter)
+            </span>
             <NumberInput
-              value={sellingPrice}
-              onValueChange={setSellingPrice}
+              value={waterRate}
               min={0}
-              placeholder="Enter your selling price"
-              className="w-full rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 text-sm text-[#0F172A] outline-none transition-colors focus:border-[#2FB9BF] focus:bg-white focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white dark:focus:bg-[#1a2332]"
+              onValueChange={(n) => {
+                const rounded = Math.round(n * 100) / 100;
+                setWaterRate(Number.isFinite(rounded) ? rounded : 0);
+              }}
+              className={inputClass}
             />
+            <p className="mt-1 text-[11px] text-[#94A3B8]">
+              Default {WATER_COST_PER_LITER_DEFAULT} Rs/liter. Applied per
+              bottle by size.
+            </p>
           </div>
 
-          {costBreakdown.total > 0 &&
-            (sellingPrice > 0 || costBreakdown.total > 0) && (
-              <div className="mt-4 border-t border-[#E2E8F0] dark:border-[#1E293B] pt-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {costBreakdown.totalBottleQty > 0 && (
-                    <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 dark:border-[#334155] dark:bg-[#0F172A]">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8]">
-                        Sale Price Per Bottle
-                      </p>
-                      <p className="mt-1 text-lg font-extrabold text-[#0F172A] dark:text-white">
-                        Rs.{" "}
-                        {costBreakdown.totalBottleQty > 0
-                          ? Math.round(sellingPrice / costBreakdown.totalBottleQty).toLocaleString()
-                          : 0}
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-[#94A3B8]">
-                        {sellingPrice > 0
-                          ? `Profit Rs. ${Math.round(
-                              (sellingPrice / costBreakdown.totalBottleQty) -
-                                costBreakdown.componentCostPerBottle,
-                            ).toLocaleString()}/bottle`
-                          : `Cost Rs. ${costBreakdown.componentCostPerBottle.toLocaleString()}/bottle`}
-                      </p>
-                    </div>
-                  )}
-                  {costBreakdown.totalPETUnits > 0 &&
-                    costBreakdown.petItemsCost.map((pet) => (
-                      <div
-                        key={`sale-${pet.size}`}
-                        className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 dark:border-[#334155] dark:bg-[#0F172A]"
-                      >
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8]">
-                          Sale Price Per {pet.size} PET
-                        </p>
-                        <p className="mt-1 text-lg font-extrabold text-[#0F172A] dark:text-white">
-                          Rs.{" "}
-                          {pet.quantity > 0
-                            ? Math.round(sellingPrice / pet.quantity).toLocaleString()
-                            : 0}
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-[#94A3B8]">
-                          Cost Rs. {pet.unitCost.toLocaleString()}/unit
-                        </p>
-                      </div>
-                    ))}
-                </div>
-
-                <div
-                  className={`mt-3 rounded-xl border p-4 ${
-                    sellingPrice >= costBreakdown.total
-                      ? "border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10"
-                      : "border-red-200 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm font-bold ${
-                      sellingPrice >= costBreakdown.total
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : "text-red-700 dark:text-red-400"
-                    }`}>
-                      {sellingPrice >= costBreakdown.total ? "Total Profit" : "Total Loss"}
+          <div className="space-y-4">
+            {billing.lines.map((line) => (
+              <div
+                key={line.size}
+                className="rounded-xl border border-[#E2E8F0] dark:border-[#1E293B] p-4"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-lg bg-[#2FB9BF]/10 px-2.5 py-1 text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
+                      {line.size}
                     </span>
-                    <span className={`text-lg font-extrabold ${
-                      sellingPrice >= costBreakdown.total
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : "text-red-700 dark:text-red-400"
-                    }`}>
-                      Rs. {Math.abs(sellingPrice - costBreakdown.total).toLocaleString()}
+                    <span className="text-xs text-[#64748B] dark:text-[#94A3B8]">
+                      {line.bottleName || "—"} · {num(line.petCount)} PET ×{" "}
+                      {line.bottlesPerPET} = {num(line.bottleCount)} bottles
                     </span>
                   </div>
-                  <p className={`mt-1 text-xs ${
-                    sellingPrice >= costBreakdown.total
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-red-600 dark:text-red-400"
-                  }`}>
-                    Selling Rs. {sellingPrice.toLocaleString()} − Cost Rs. {costBreakdown.total.toLocaleString()}
-                  </p>
+                </div>
+
+                <div className="mb-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-5">
+                  <div className="rounded-lg bg-[#F8FAFC] p-2.5 dark:bg-[#0B1220]">
+                    <p className="text-[#94A3B8]">Bottles</p>
+                    <p className="mt-0.5 font-bold text-[#0F172A] dark:text-white">
+                      {rs(line.bottleCostAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] p-2.5 dark:bg-[#0B1220]">
+                    <p className="text-[#94A3B8]">Caps</p>
+                    <p className="mt-0.5 font-bold text-[#0F172A] dark:text-white">
+                      {rs(line.capCostAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] p-2.5 dark:bg-[#0B1220]">
+                    <p className="text-[#94A3B8]">Labels</p>
+                    <p className="mt-0.5 font-bold text-[#0F172A] dark:text-white">
+                      {rs(line.labelCostAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] p-2.5 dark:bg-[#0B1220]">
+                    <p className="text-[#94A3B8]">PET packaging</p>
+                    <p className="mt-0.5 font-bold text-[#0F172A] dark:text-white">
+                      {rs(line.petPackCostAmount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] p-2.5 dark:bg-[#0B1220]">
+                    <p className="text-[#94A3B8]">Water</p>
+                    <p className="mt-0.5 font-bold text-[#0F172A] dark:text-white">
+                      {rs(line.waterCostAmount)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-lg border border-[#2FB9BF]/30 bg-[#2FB9BF]/5 px-2.5 py-1.5 font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
+                    Cost/bottle {rs(line.costPerBottle)}
+                  </span>
+                  <span className="rounded-lg border border-[#2FB9BF]/30 bg-[#2FB9BF]/5 px-2.5 py-1.5 font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
+                    Cost/PET {rs(line.costPerPET)}
+                  </span>
+                  <span className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1.5 font-bold text-[#0F172A] dark:border-[#334155] dark:bg-[#0B1220] dark:text-white">
+                    Total cost {rs(line.costAmount)}
+                  </span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-[200px_1fr]">
+                  <div
+                    ref={registerField(`sell-${line.size}`)}
+                    className={
+                      invalid.includes(`sell-${line.size}`)
+                        ? "rounded-xl ring-2 ring-red-400/50"
+                        : ""
+                    }
+                  >
+                    <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                      Selling price per PET (Rs)
+                    </span>
+                    <NumberInput
+                      value={Number(sellPerPET[line.size] ?? 0)}
+                      min={0}
+                      onValueChange={(n) => {
+                        setSellPerPET((prev) => ({ ...prev, [line.size]: n }));
+                        clearInvalid(`sell-${line.size}`);
+                      }}
+                      className={`${inputClass} ${
+                        invalid.includes(`sell-${line.size}`) ? invalidClass : ""
+                      }`}
+                    />
+                  </div>
+                  <div className="flex items-end justify-between gap-3 rounded-xl bg-[#F8FAFC] p-3 dark:bg-[#0B1220]">
+                    <div>
+                      <p className="text-xs font-semibold text-[#94A3B8]">
+                        Sale amount
+                      </p>
+                      <p className="text-lg font-extrabold text-[#0F172A] dark:text-white">
+                        {rs(line.sellAmount)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-semibold text-[#94A3B8]">
+                        Profit
+                      </p>
+                      <p
+                        className={`text-lg font-extrabold ${
+                          line.sellAmount - line.costAmount >= 0
+                            ? "text-emerald-500"
+                            : "text-red-500"
+                        }`}
+                      >
+                        {rs(line.sellAmount - line.costAmount)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
+            ))}
+          </div>
 
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#2FB9BF] px-6 py-3 text-sm font-bold text-white shadow-[0_4px_16px_rgba(47,185,191,0.3)] transition-all hover:bg-[#28a5ab] hover:shadow-[0_6px_24px_rgba(47,185,191,0.4)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? (
-              <>
+          <div className="mt-6 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 dark:border-[#1E293B] dark:bg-[#0B1220]">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs font-semibold text-[#94A3B8]">Total bottles</p>
+                <p className="text-sm font-bold text-[#0F172A] dark:text-white">
+                  {num(totalBottleQty)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-[#94A3B8]">Total PET</p>
+                <p className="text-sm font-bold text-[#0F172A] dark:text-white">
+                  {num(totalPetPacks)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-[#94A3B8]">Total cost</p>
+                <p className="text-sm font-bold text-[#0F172A] dark:text-white">
+                  {rs(billing.totals.cost)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-[#94A3B8]">Total selling price</p>
+                <p className="text-sm font-extrabold text-[#2FB9BF]">
+                  {rs(billing.totals.sell)}
+                </p>
+              </div>
+            </div>
+            <div
+              className={`mt-3 rounded-lg px-3 py-2 text-center text-sm font-bold ${
+                billing.totals.profit >= 0
+                  ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  : "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400"
+              }`}
+            >
+              {billing.totals.profit >= 0 ? "Profit" : "Loss"}:{" "}
+              {rs(billing.totals.profit)}
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-xl border border-[#2FB9BF]/30 bg-[#E6F7F8] p-4 dark:border-[#2FB9BF]/20 dark:bg-[#163A3B]">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-[#0F172A] dark:text-white">
+                  Advance payment (optional)
+                </h3>
+                <p className="mt-0.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+                  Record an amount the customer pays now. It appears tagged as
+                  &ldquo;Advance&rdquo; in the order&apos;s payment records.
+                </p>
+              </div>
+              {advanceAmount > 0 && (
+                <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                  Advance
+                </span>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div
+                ref={registerField("advanceAmount")}
+                className={
+                  invalid.includes("advanceAmount")
+                    ? "rounded-xl ring-2 ring-red-400/50"
+                    : ""
+                }
+              >
+                <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                  Amount (Rs)
+                </span>
+                <NumberInput
+                  value={advanceAmount}
+                  min={0}
+                  allowDecimal
+                  onValueChange={(n) => {
+                    setAdvanceAmount(n);
+                    clearInvalid("advanceAmount");
+                  }}
+                  className={`${inputClass} ${
+                    invalid.includes("advanceAmount") ? invalidClass : ""
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                  Method
+                </span>
+                <SelectDropdown
+                  value={advanceMethod}
+                  placeholder="Not specified"
+                  options={[
+                    { label: "Not specified", value: "" },
+                    { label: "Cash", value: "Cash" },
+                    { label: "Bank transfer", value: "Bank transfer" },
+                    { label: "Online transfer", value: "Online transfer" },
+                    { label: "Cheque", value: "Cheque" },
+                    { label: "Other", value: "Other" },
+                  ]}
+                  onSelect={setAdvanceMethod}
+                />
+              </div>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                  Note
+                </span>
+                <input
+                  type="text"
+                  value={advanceNote}
+                  onChange={(e) => setAdvanceNote(e.target.value)}
+                  className={inputClass}
+                  placeholder="e.g. 50% advance"
+                />
+              </div>
+            </div>
+            {advanceAmount > 0 && (
+              <p className="mt-3 text-xs font-medium text-[#0E7A80] dark:text-[#5EEAD4]">
+                Remaining after advance:{" "}
+                <span className="font-bold">
+                  {rs(Math.max(0, billing.totals.sell - advanceAmount))}
+                </span>
+              </p>
+            )}
+          </div>
+
+          <div className="mt-6">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleSubmit}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#2FB9BF] px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-[#25a3a8] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Creating Order…
-              </>
-            ) : (
-              <>
-                <Package className="h-4 w-4" />
-                Create Order &amp; Deduct Stock
-              </>
-)}
-          </button>
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              {submitting ? "Creating order…" : "Create Order"}
+            </button>
+          </div>
         </div>
       </div>
 
-      {showAddLabelModal && (
-        <AddLabelModal
-          onClose={() => setShowAddLabelModal(false)}
-          onCreated={handleLabelCreated}
-        />
-      )}
-    </AdminPage>
-  );
-}
-
-function AddLabelModal({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: (label: Label) => void;
-}) {
-  const [name, setName] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [details, setDetails] = useState<
-    Record<string, { quantity: number; totalCostPrice: number }>
-  >(
-    Object.fromEntries(
-      BOTTLE_SIZES.map((size) => [size, { quantity: 0, totalCostPrice: 0 }]),
-    ),
-  );
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setError(null);
-    try {
-      const result = await uploadBottleImage(file, "labels");
-      setImageUrl(result.url);
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Image upload failed.",
-      );
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
-  }
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError("Label name is required.");
-      return;
-    }
-    const sizeDetails = BOTTLE_SIZES.filter((size) => {
-      const d = details[size];
-      return (d.quantity || 0) > 0 || (d.totalCostPrice || 0) > 0;
-    }).map((size) => {
-      const d = details[size];
-      const quantity = Number(d.quantity) || 0;
-      const totalCostPrice = Number(d.totalCostPrice) || 0;
-      return {
-        size,
-        quantity,
-        totalCostPrice,
-        stockAlertLevel: 0,
-        unitCostPrice:
-          quantity > 0
-            ? Math.round((totalCostPrice / quantity) * 100) / 100
-            : 0,
-      };
-    });
-
-    setSubmitting(true);
-    setError(null);
-    try {
-      const created = await createLabel({
-        name: trimmed,
-        imageUrl,
-        sizeDetails,
-      });
-      onCreated(created);
-    } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : "Failed to add label.",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <form
-        onSubmit={(e) => void handleSubmit(e)}
-        className="w-full max-w-md rounded-2xl border border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A] p-6 shadow-xl dark:shadow-none"
-      >
-        <h3 className="text-base font-bold text-[#0F172A] dark:text-white">
-          Add New Label
-        </h3>
-        <p className="mt-1 text-sm text-[#64748B] dark:text-[#94A3B8]">
-          This label will be saved to inventory and available in the dropdown.
-        </p>
-
-        <div className="mt-4">
-          <label className="mb-1.5 block text-sm font-medium text-[#0F172A] dark:text-white">
-            Label Name *
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Classic Mineral 500ml"
-            className={inputClass}
-            autoFocus
-          />
-        </div>
-
-        <div className="mt-3">
-          <label className="mb-1.5 block text-sm font-medium text-[#0F172A] dark:text-white">
-            Image <span className="font-normal text-[#94A3B8]">(optional)</span>
-          </label>
-          {imageUrl ? (
-            <div className="flex items-center gap-3 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 dark:border-[#334155] dark:bg-[#0F172A]">
-              <img
-                src={imageUrl}
-                alt="Label preview"
-                className="h-14 w-14 rounded-lg object-cover"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-[#0F172A] dark:text-white">
-                  Image uploaded
+      {quickAddOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl dark:bg-[#0F172A] sm:rounded-2xl sm:p-6">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-[#0F172A] dark:text-white">
+                  Add New Client
+                </h3>
+                <p className="mt-0.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+                  Creates a marketing client and selects them for this order.
                 </p>
-                <p className="text-xs text-[#94A3B8]">Ready to use</p>
               </div>
               <button
                 type="button"
-                onClick={() => setImageUrl("")}
-                className="rounded-lg p-1.5 text-[#94A3B8] hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                onClick={() => setQuickAddOpen(false)}
+                className="rounded-lg p-1 text-[#94A3B8] transition-colors hover:bg-[#F1F5F9] dark:hover:bg-[#1E293B]"
+                aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-          ) : (
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-[#CBD5E1] bg-white px-4 py-2.5 text-sm font-semibold text-[#475569] transition-colors hover:border-[#2FB9BF] hover:text-[#2FB9BF] dark:border-[#334155] dark:bg-[#0F172A] dark:text-[#94A3B8] dark:hover:border-[#2FB9BF]">
-              {uploading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin text-[#2FB9BF]" />
-                  Uploading…
-                </>
-              ) : (
-                "Upload image"
-              )}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="hidden"
-                onChange={(e) => void handleUpload(e)}
-                disabled={uploading}
-              />
-            </label>
-          )}
-        </div>
 
-        <div className="mt-3">
-          <p className="mb-1.5 text-sm font-medium text-[#0F172A] dark:text-white">
-            Stock <span className="font-normal text-[#94A3B8]">(optional)</span>
-          </p>
-          <div className="space-y-2">
-            {BOTTLE_SIZES.map((size) => (
-              <div
-                key={size}
-                className="flex items-center gap-2 rounded-xl border border-[#E2E8F0] dark:border-[#1E293B] bg-[#F8FAFC] dark:bg-[#0F172A] p-2.5"
-              >
-                <span className="w-16 shrink-0 text-sm font-semibold text-[#0F172A] dark:text-white">
-                  {size}
+            {quickAddError ? (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+                {quickAddError}
+              </div>
+            ) : null}
+
+            <div className="space-y-3.5">
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                  Business Name <span className="text-red-500">*</span>
                 </span>
-                <NumberInput
-                  value={details[size].quantity}
-                  onValueChange={(n) =>
-                    setDetails((current) => ({
-                      ...current,
-                      [size]: { ...current[size], quantity: n },
-                    }))
-                  }
-                  placeholder="Qty"
-                  className={`${inputClass} !py-1.5`}
-                />
-                <NumberInput
-                  value={details[size].totalCostPrice}
-                  onValueChange={(n) =>
-                    setDetails((current) => ({
-                      ...current,
-                      [size]: { ...current[size], totalCostPrice: n },
-                    }))
-                  }
-                  placeholder="Cost"
-                  className={`${inputClass} !py-1.5`}
+                <input
+                  className={inputClass}
+                  value={quickAddBusiness}
+                  onChange={(e) => setQuickAddBusiness(e.target.value)}
+                  placeholder="e.g. Eden Garden"
+                  autoFocus
                 />
               </div>
-            ))}
-          </div>
-        </div>
-
-        {error && (
-          <div className="mt-4 rounded-xl border border-red-200 dark:border-[#334155] bg-red-50 dark:bg-[#1E293B] px-4 py-3 text-sm font-medium text-red-600">
-            {error}
-          </div>
-        )}
-
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded-xl border border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#0F172A] px-4 py-2.5 text-sm font-semibold text-[#475569] dark:text-[#94A3B8] hover:border-[#2FB9BF]/50 disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#2FB9BF] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(47,185,191,0.3)] dark:shadow-none transition-colors hover:bg-[#28a9af] disabled:opacity-60"
-          >
-            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            Add Label
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function SelectCapDropdown({
-  caps,
-  value,
-  onSelect,
-}: {
-  caps: Cap[];
-  value: string;
-  onSelect: (id: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = caps.find((c) => c._id === value);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3.5 py-2.5 text-sm text-[#0F172A] outline-none transition-colors focus:border-[#2FB9BF] focus:bg-white focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white dark:focus:bg-[#0F172A]"
-      >
-        <span
-          className={
-            selected
-              ? "text-[#0F172A] dark:text-white"
-              : "text-[#94A3B8]"
-          }
-        >
-          {selected
-            ? `${selected.color} (${selected.customId}) — ${selected.totalQuantity} in stock`
-            : "Select a cap…"}
-        </span>
-        <ChevronDown className="h-4 w-4 text-[#94A3B8]" />
-      </button>
-      {open && (
-        <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-auto rounded-xl border border-[#E2E8F0] bg-white py-1 shadow-lg dark:border-[#1E293B] dark:bg-[#0F172A]">
-          {caps.map((cap) => {
-            const isSelected = cap._id === value;
-            return (
-              <button
-                key={cap._id}
-                type="button"
-                onClick={() => {
-                  onSelect(cap._id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-sm transition-colors ${
-                  isSelected
-                    ? "bg-[#F0FDFB] font-semibold text-[#0E7A80] dark:bg-[#163A3B] dark:text-[#5EEAD4]"
-                    : "text-[#334155] hover:bg-[#F8FAFC] dark:text-[#CBD5E1] dark:hover:bg-[#1E293B]"
-                }`}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block font-medium">{cap.color}</span>
-                  <span className="block text-xs text-[#94A3B8]">
-                    {cap.customId} &middot; {cap.totalQuantity} in stock
-                  </span>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                  Owner Name
                 </span>
-                {isSelected && (
-                  <Check className="h-4 w-4 shrink-0 text-[#2FB9BF]" />
-                )}
+                <input
+                  className={inputClass}
+                  value={quickAddOwner}
+                  onChange={(e) => setQuickAddOwner(e.target.value)}
+                  placeholder="e.g. Umar"
+                />
+              </div>
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <div>
+                  <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                    Phone
+                  </span>
+                  <input
+                    className={inputClass}
+                    value={quickAddPhone}
+                    onChange={(e) => setQuickAddPhone(e.target.value)}
+                    placeholder="+92 300 1234567"
+                  />
+                </div>
+                <div>
+                  <span className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#CBD5E1]">
+                    WhatsApp
+                  </span>
+                  <input
+                    className={inputClass}
+                    value={quickAddSame ? quickAddPhone : quickAddWhatsapp}
+                    onChange={(e) => setQuickAddWhatsapp(e.target.value)}
+                    placeholder="+92 300 1234567"
+                    readOnly={quickAddSame}
+                  />
+                  <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs font-medium text-[#475569] dark:text-[#CBD5E1]">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-[#E2E8F0] text-[#2FB9BF] focus:ring-[#2FB9BF]/30"
+                      checked={quickAddSame}
+                      onChange={(e) => setQuickAddSame(e.target.checked)}
+                    />
+                    Same as phone
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setQuickAddOpen(false)}
+                className="rounded-xl border border-[#E2E8F0] px-4 py-2.5 text-sm font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC] dark:border-[#334155] dark:text-[#CBD5E1] dark:hover:bg-[#1E293B]"
+              >
+                Cancel
               </button>
-            );
-          })}
+              <button
+                type="button"
+                disabled={quickAddSaving}
+                onClick={handleQuickAdd}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#2FB9BF] px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#25a3a8] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {quickAddSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {quickAddSaving ? "Adding…" : "Add & Select"}
+              </button>
+            </div>
+          </div>
         </div>
-      )}
-    </div>
+      ) : null}
+    </AdminPage>
   );
 }

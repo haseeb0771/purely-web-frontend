@@ -19,7 +19,9 @@ import {
   X,
 } from "lucide-react";
 import AdminPage from "@/components/admin/AdminPage";
+import DatePicker from "@/components/admin/DatePicker";
 import DateRangeFilter from "@/components/admin/DateRangeFilter";
+import NumberInput from "@/components/admin/NumberInput";
 import SelectDropdown, { type SelectOption } from "@/components/admin/SelectDropdown";
 import { useToast } from "@/components/admin/toast";
 import {
@@ -44,6 +46,8 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
   PROCESSING:
     "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/30",
   COMPLETED:
+    "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:ring-sky-500/30",
+  DELIVERED:
     "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/30",
   CANCELLED:
     "bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/30",
@@ -53,8 +57,18 @@ const STATUS_ORDER: OrderStatus[] = [
   "PENDING",
   "PROCESSING",
   "COMPLETED",
+  "DELIVERED",
   "CANCELLED",
 ];
+
+const PAYMENT_STATUS_STYLES: Record<string, string> = {
+  PAID:
+    "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/30",
+  PARTIAL:
+    "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/30",
+  UNPAID:
+    "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/30",
+};
 
 function formatDateTime(iso?: string): string {
   if (!iso) return "—";
@@ -249,6 +263,9 @@ export default function ManageOrdersPage() {
   );
   const [deleteSaving, setDeleteSaving] = useState(false);
 
+  const [paymentOrder, setPaymentOrder] = useState<OrderResponse | null>(null);
+  const [paymentSaving, setPaymentSaving] = useState(false);
+
   const safeOrders = Array.isArray(orders) ? orders : [];
 
   const filtersRef = useRef<FiltersState>(emptyFilters);
@@ -329,6 +346,12 @@ export default function ManageOrdersPage() {
       });
       setSelectedOrder(updated);
       toast.success("Order status updated.");
+      if (
+        detailsStatus === "DELIVERED" &&
+        (updated.sellingPrice ?? 0) > (updated.totalPaid ?? 0)
+      ) {
+        setPaymentOrder(updated);
+      }
       void load(pageRef.current);
     } catch (err) {
       toast.error(
@@ -336,6 +359,34 @@ export default function ManageOrdersPage() {
       );
     } finally {
       setSavingStatus(false);
+    }
+  }
+
+  async function recordPayment(amount: number, method: string, note: string) {
+    if (!paymentOrder) return;
+    setPaymentSaving(true);
+    try {
+      const updated = await updateOrder(paymentOrder._id, {
+        payment: {
+          amount,
+          method: method.trim() || undefined,
+          note: note.trim() || undefined,
+        },
+      });
+      setPaymentOrder(null);
+      if (selectedOrder?._id === updated._id) setSelectedOrder(updated);
+      toast.success(
+        updated.paymentStatus === "PAID"
+          ? "Payment received — order fully paid."
+          : "Payment recorded."
+      );
+      void load(pageRef.current);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "Failed to record payment."
+      );
+    } finally {
+      setPaymentSaving(false);
     }
   }
 
@@ -433,7 +484,7 @@ export default function ManageOrdersPage() {
                   type="text"
                   value={searchDraft}
                   onChange={(e) => setSearchDraft(e.target.value)}
-                  placeholder="Business / owner / phone…"
+                  placeholder="Search by client, business or phone…"
                   className={`${inputClass} w-full pl-9`}
                 />
                 {searchDraft && (
@@ -686,7 +737,19 @@ export default function ManageOrdersPage() {
           setDetailsStatus={setDetailsStatus}
           savingStatus={savingStatus}
           onSaveStatus={saveStatus}
+          onRecordPayment={() => setPaymentOrder(selectedOrder)}
           onClose={() => setSelectedOrder(null)}
+        />
+      )}
+
+      {paymentOrder && (
+        <PaymentModal
+          order={paymentOrder}
+          saving={paymentSaving}
+          onRecord={recordPayment}
+          onClose={() => {
+            if (!paymentSaving) setPaymentOrder(null);
+          }}
         />
       )}
 
@@ -752,6 +815,7 @@ function OrderDetailsModal({
   setDetailsStatus,
   savingStatus,
   onSaveStatus,
+  onRecordPayment,
   onClose,
 }: {
   order: OrderResponse;
@@ -759,15 +823,23 @@ function OrderDetailsModal({
   setDetailsStatus: (status: OrderStatus) => void;
   savingStatus: boolean;
   onSaveStatus: () => void;
+  onRecordPayment: () => void;
   onClose: () => void;
 }) {
   const bottle = order.bottleSelection.bottleId;
   const cap = order.capSelection.capId;
   const label = order.labelSelection.labelId;
-  const capUnitCost =
-    cap && cap.totalQuantity > 0
-      ? cap.totalCostPrice / cap.totalQuantity
-      : undefined;
+  const capUnitCost = cap
+    ? cap.unitCostPrice > 0
+      ? cap.unitCostPrice
+      : cap.totalQuantity > 0
+        ? cap.totalCostPrice / cap.totalQuantity
+        : undefined
+    : undefined;
+  const remaining = Math.max(
+    0,
+    (order.sellingPrice ?? 0) - (order.totalPaid ?? 0)
+  );
 
   const estimatedTotal = [
     ...order.bottleSelection.sizeQuantities.map((item) => {
@@ -783,8 +855,18 @@ function OrderDetailsModal({
       : []),
     ...order.petPackagingSelection.map((item) => {
       const pet = item.petPackagingId;
-      const unitCost =
-        pet.quantity > 0 ? pet.totalCostPrice / pet.quantity : 0;
+      const detail = pet.sizeDetails?.find((d) => d.size === item.size);
+      const unitCost = detail
+        ? detail.unitCostPrice > 0
+          ? detail.unitCostPrice
+          : detail.quantity > 0
+            ? detail.totalCostPrice / detail.quantity
+            : 0
+        : pet.unitCostPrice > 0
+          ? pet.unitCostPrice
+          : pet.quantity > 0
+            ? pet.totalCostPrice / pet.quantity
+            : 0;
       return Number.isFinite(unitCost) ? unitCost * item.quantity : 0;
     }),
   ].reduce((sum, v) => sum + (Number.isFinite(v) ? v : 0), 0);
@@ -908,7 +990,7 @@ function OrderDetailsModal({
                       </dd>
                     </div>
                   </dl>
-                  {bottle.imageUrl && (
+                  {bottle.imageUrl?.trim() && (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
                       src={bottle.imageUrl}
@@ -1056,7 +1138,7 @@ function OrderDetailsModal({
               <div className="mt-3 space-y-2">
                 {order.petPackagingSelection.map((item) => (
                   <div
-                    key={item.petPackagingId._id}
+                    key={`${item.petPackagingId._id}-${item.size}`}
                     className="flex items-center justify-between rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] dark:border-[#334155] dark:bg-[#0F172A] px-4 py-2.5"
                   >
                     <div>
@@ -1133,86 +1215,182 @@ function OrderDetailsModal({
 
           <div className="mt-4 rounded-2xl border border-[#E2E8F0] dark:border-[#1E293B] p-4">
             <h4 className="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">
-              Cost &amp; Financials
+              Cost &amp; Financials{" "}
+              {order.priceBreakdown && (
+                <span className="text-[#2FB9BF]">× per-size bill</span>
+              )}
             </h4>
-            <div className="mt-3 space-y-1.5 text-sm">
-              {order.bottleSelection.sizeQuantities.map((item) => {
-                const detail = bottle?.sizeDetails.find(
-                  (d) => d.size === item.size
-                );
-                const lineCost = (detail?.unitCostPrice ?? 0) * item.quantity;
-                return (
+            {order.priceBreakdown ? (
+              <div className="mt-3 space-y-1.5 text-sm">
+                {order.priceBreakdown.bottleLines.map((line, i) => (
                   <div
-                    key={item.size}
-                    className="flex justify-between text-[#64748B] dark:text-[#94A3B8]"
+                    key={`bd-bottle-${i}`}
+                    className="flex justify-between gap-2 text-[#64748B] dark:text-[#94A3B8]"
                   >
-                    <span>
-                      Bottle {item.size} × {item.quantity.toLocaleString("en-US")}
+                    <span className="truncate">
+                      Bottle {line.size} × {line.quantity.toLocaleString("en-US")}
+                      {line.costPerBottle
+                        ? ` (Rs. ${line.costPerBottle.toLocaleString()}/bottle incl. ${(
+                            line.waterCostPerBottle ?? 0
+                          ).toLocaleString()} water)`
+                        : ` (Rs. ${line.costPerUnit.toLocaleString()}/bottle)`}
+                      {line.costPerPET && line.petCount
+                        ? ` · PET Rs. ${line.costPerPET.toLocaleString()}`
+                        : ""}
                     </span>
                     <span className="font-medium text-[#0F172A] dark:text-white">
-                      {money(lineCost)}
+                      {money(line.costAmount)}
                     </span>
                   </div>
-                );
-              })}
-              <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
-                <span>
-                  Cap × {order.capSelection.quantity.toLocaleString("en-US")}
-                </span>
-                <span className="font-medium text-[#0F172A] dark:text-white">
-                  {money((capUnitCost ?? 0) * order.capSelection.quantity)}
-                </span>
+                ))}
+                {order.priceBreakdown.componentTotals.caps > 0 && (
+                  <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
+                    <span>
+                      Caps × {order.capSelection.quantity.toLocaleString("en-US")}
+                    </span>
+                    <span className="font-medium text-[#0F172A] dark:text-white">
+                      {money(order.priceBreakdown.componentTotals.caps)}
+                    </span>
+                  </div>
+                )}
+                {order.priceBreakdown.componentTotals.labels > 0 && (
+                  <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
+                    <span>Labels</span>
+                    <span className="font-medium text-[#0F172A] dark:text-white">
+                      {money(order.priceBreakdown.componentTotals.labels)}
+                    </span>
+                  </div>
+                )}
+                {order.priceBreakdown.petLines.map((line, i) => (
+                  <div
+                    key={`bd-pet-${i}`}
+                    className="flex justify-between gap-2 text-[#64748B] dark:text-[#94A3B8]"
+                  >
+                    <span className="truncate">
+                      PET {line.size} × {line.quantity.toLocaleString("en-US")} (Rs.{" "}
+                      {line.costPerUnit.toLocaleString()}/pack)
+                    </span>
+                    <span className="font-medium text-[#0F172A] dark:text-white">
+                      {money(line.costAmount)}
+                    </span>
+                  </div>
+                ))}
+                {order.priceBreakdown.water.amount > 0 && (
+                  <div className="flex justify-between text-[#0E7A80] dark:text-[#5EEAD4]">
+                    <span>
+                      Water @ Rs. {order.priceBreakdown.water.rate}/L ×{" "}
+                      {order.priceBreakdown.water.liters.toLocaleString()} L
+                    </span>
+                    <span className="font-medium">
+                      {money(order.priceBreakdown.water.amount)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-[#E2E8F0] pt-2 dark:border-[#1E293B]">
+                  <span className="font-semibold text-[#0F172A] dark:text-white">
+                    Total Cost (incl. water)
+                  </span>
+                  <span className="font-bold text-[#0F172A] dark:text-white">
+                    {money(order.totalCost ?? order.priceBreakdown.totals.cost)}
+                  </span>
+                </div>
               </div>
-              {label &&
-                order.bottleSelection.sizeQuantities.map((item) => {
-                  const detail = label.sizeDetails.find(
+            ) : (
+              <div className="mt-3 space-y-1.5 text-sm">
+                {order.bottleSelection.sizeQuantities.map((item) => {
+                  const detail = bottle?.sizeDetails.find(
                     (d) => d.size === item.size
                   );
-                  if (!detail) return null;
+                  const lineCost = (detail?.unitCostPrice ?? 0) * item.quantity;
                   return (
                     <div
-                      key={`label-${item.size}`}
+                      key={item.size}
                       className="flex justify-between text-[#64748B] dark:text-[#94A3B8]"
                     >
                       <span>
-                        Label {item.size} ×{" "}
-                        {item.quantity.toLocaleString("en-US")}
+                        Bottle {item.size} × {item.quantity.toLocaleString("en-US")}
                       </span>
                       <span className="font-medium text-[#0F172A] dark:text-white">
-                        {money((detail.unitCostPrice ?? 0) * item.quantity)}
+                        {money(lineCost)}
                       </span>
                     </div>
                   );
                 })}
-              {order.petPackagingSelection.map((item) => {
-                const pet = item.petPackagingId;
-                const unitCost =
-                  pet.quantity > 0
-                    ? pet.totalCostPrice / pet.quantity
-                    : undefined;
-                return (
-                  <div
-                    key={`pet-${item.petPackagingId._id}`}
-                    className="flex justify-between text-[#64748B] dark:text-[#94A3B8]"
-                  >
-                    <span>
-                      PET {item.size} × {item.quantity.toLocaleString("en-US")}
-                    </span>
-                    <span className="font-medium text-[#0F172A] dark:text-white">
-                      {money((unitCost ?? 0) * item.quantity)}
-                    </span>
-                  </div>
-                );
-              })}
-              <div className="flex justify-between border-t border-[#E2E8F0] pt-2 dark:border-[#1E293B]">
-                <span className="font-semibold text-[#0F172A] dark:text-white">
-                  Total Cost
-                </span>
-                <span className="font-bold text-[#0F172A] dark:text-white">
-                  {money(order.totalCost ?? estimatedTotal)}
-                </span>
+                <div className="flex justify-between text-[#64748B] dark:text-[#94A3B8]">
+                  <span>
+                    Cap × {order.capSelection.quantity.toLocaleString("en-US")}
+                  </span>
+                  <span className="font-medium text-[#0F172A] dark:text-white">
+                    {money((capUnitCost ?? 0) * order.capSelection.quantity)}
+                  </span>
+                </div>
+                {label &&
+                  order.bottleSelection.sizeQuantities.map((item) => {
+                    const detail = label.sizeDetails.find(
+                      (d) => d.size === item.size
+                    );
+                    if (!detail) return null;
+                    return (
+                      <div
+                        key={`label-${item.size}`}
+                        className="flex justify-between text-[#64748B] dark:text-[#94A3B8]"
+                      >
+                        <span>
+                          Label {item.size} ×{" "}
+                          {item.quantity.toLocaleString("en-US")}
+                        </span>
+                        <span className="font-medium text-[#0F172A] dark:text-white">
+                          {money(
+                            (detail.unitCostPrice > 0
+                              ? detail.unitCostPrice
+                              : detail.quantity > 0
+                                ? detail.totalCostPrice / detail.quantity
+                                : 0) * item.quantity
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+                {order.petPackagingSelection.map((item) => {
+                  const pet = item.petPackagingId;
+                  const detail = pet.sizeDetails?.find(
+                    (d) => d.size === item.size
+                  );
+                  const unitCost = detail
+                    ? detail.unitCostPrice > 0
+                      ? detail.unitCostPrice
+                      : detail.quantity > 0
+                        ? detail.totalCostPrice / detail.quantity
+                        : 0
+                    : pet.unitCostPrice > 0
+                      ? pet.unitCostPrice
+                      : pet.quantity > 0
+                        ? pet.totalCostPrice / pet.quantity
+                        : 0;
+                  return (
+                    <div
+                      key={`pet-${item.petPackagingId._id}-${item.size}`}
+                      className="flex justify-between text-[#64748B] dark:text-[#94A3B8]"
+                    >
+                      <span>
+                        PET {item.size} × {item.quantity.toLocaleString("en-US")}
+                      </span>
+                      <span className="font-medium text-[#0F172A] dark:text-white">
+                        {money((unitCost ?? 0) * item.quantity)}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="flex justify-between border-t border-[#E2E8F0] pt-2 dark:border-[#1E293B]">
+                  <span className="font-semibold text-[#0F172A] dark:text-white">
+                    Total Cost
+                  </span>
+                  <span className="font-bold text-[#0F172A] dark:text-white">
+                    {money(order.totalCost ?? estimatedTotal)}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1223,6 +1401,44 @@ function OrderDetailsModal({
               <p className="mt-2 text-2xl font-extrabold text-[#0F172A] dark:text-white">
                 {money(order.sellingPrice ?? 0)}
               </p>
+              {order.priceBreakdown && (
+                <div className="mt-2 space-y-1 border-t border-[#E2E8F0] pt-2 dark:border-[#1E293B]">
+                  {order.priceBreakdown.bottleLines
+                    .filter((line) => (line.sellAmount ?? 0) > 0)
+                    .map((line, i) => (
+                      <div
+                        key={`sell-bottle-${i}`}
+                        className="flex justify-between text-xs text-[#64748B] dark:text-[#94A3B8]"
+                      >
+                        <span>
+                          {line.size} × {line.quantity.toLocaleString("en-US")}
+                          {line.sellPerPET
+                            ? ` (Rs. ${line.sellPerPET.toLocaleString()}/PET)`
+                            : ` (Rs. ${(line.sellPerUnit ?? 0).toLocaleString()}/bottle)`}
+                        </span>
+                        <span className="font-semibold text-[#0F172A] dark:text-white">
+                          {money(line.sellAmount ?? 0)}
+                        </span>
+                      </div>
+                    ))}
+                  {order.priceBreakdown.petLines
+                    .filter((line) => (line.sellAmount ?? 0) > 0)
+                    .map((line, i) => (
+                      <div
+                        key={`sell-pet-${i}`}
+                        className="flex justify-between text-xs text-[#64748B] dark:text-[#94A3B8]"
+                      >
+                        <span>
+                          PET {line.size} × {line.quantity.toLocaleString("en-US")} (Rs.{" "}
+                          {line.sellPerUnit?.toLocaleString()}/pack)
+                        </span>
+                        <span className="font-semibold text-[#0F172A] dark:text-white">
+                          {money(line.sellAmount ?? 0)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
             <div className="rounded-2xl border border-[#E2E8F0] dark:border-[#1E293B] p-4">
               <h4 className="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">
@@ -1236,6 +1452,99 @@ function OrderDetailsModal({
                 {(order.profit ?? 0) >= 0 ? "+" : ""}{money(order.profit ?? 0)}
               </p>
             </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-[#E2E8F0] dark:border-[#1E293B] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[#94A3B8]">
+                Payment
+              </h4>
+              <span
+                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${
+                  PAYMENT_STATUS_STYLES[order.paymentStatus ?? "UNPAID"] ?? ""
+                }`}
+              >
+                {order.paymentStatus === "PAID"
+                  ? "Fully paid"
+                  : order.paymentStatus === "PARTIAL"
+                  ? "Partially paid"
+                  : "Payment pending"}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Bill total
+                </p>
+                <p className="mt-0.5 text-sm font-bold text-[#0F172A] dark:text-white">
+                  {money(order.sellingPrice ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Amount paid
+                </p>
+                <p className="mt-0.5 text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                  {money(order.totalPaid ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Remaining
+                </p>
+                <p
+                  className={`mt-0.5 text-sm font-bold ${
+                    remaining > 0
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-emerald-600 dark:text-emerald-400"
+                  }`}
+                >
+                  {money(remaining)}
+                </p>
+              </div>
+            </div>
+            {remaining > 0 && (
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="text-xs text-[#94A3B8]">
+                  {order.status === "DELIVERED"
+                    ? "Reminders are sent every 2 days until settled."
+                    : "You can record advance or partial payments."}
+                </p>
+                <button
+                  type="button"
+                  onClick={onRecordPayment}
+                  className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#2FB9BF] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#0BAEC4]"
+                >
+                  Record payment
+                </button>
+              </div>
+            )}
+            {(order.payments?.length ?? 0) > 0 && (
+              <div className="mt-3 space-y-1.5 border-t border-[#E2E8F0] pt-3 dark:border-[#1E293B]">
+                {order.payments!.slice(-5).reverse().map((entry, i) => (
+                  <div
+                    key={`${entry.paidAt}-${i}`}
+                    className="flex items-center justify-between gap-2 text-xs"
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {entry.source === "ADVANCE" && (
+                        <span className="inline-flex shrink-0 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                          Advance
+                        </span>
+                      )}
+                      <span className="truncate text-[#64748B] dark:text-[#94A3B8]">
+                        {formatDateTime(entry.paidAt)}
+                        {entry.method ? ` · ${entry.method}` : ""}
+                        {entry.recordedByName ? ` · ${entry.recordedByName}` : ""}
+                      </span>
+                    </span>
+                    <span className="font-semibold text-[#0F172A] dark:text-white">
+                      {money(entry.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 rounded-2xl border border-[#2FB9BF]/30 bg-[#E6F7F8] p-4 dark:border-[#2FB9BF]/20 dark:bg-[#163A3B]">
@@ -1254,6 +1563,169 @@ function OrderDetailsModal({
               </p>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentModal({
+  order,
+  saving,
+  onRecord,
+  onClose,
+}: {
+  order: OrderResponse;
+  saving: boolean;
+  onRecord: (amount: number, method: string, note: string) => void;
+  onClose: () => void;
+}) {
+  const totalBill = order.sellingPrice ?? 0;
+  const alreadyPaid = order.totalPaid ?? 0;
+  const remaining = Math.max(0, totalBill - alreadyPaid);
+  const [amount, setAmount] = useState(String(remaining));
+  const [method, setMethod] = useState("");
+  const [note, setNote] = useState("");
+
+  const parsed = Math.round((Number(amount) || 0) * 100) / 100;
+  const invalid =
+    !Number.isFinite(parsed) || parsed <= 0 || parsed > remaining;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-[#0F172A]/50 backdrop-blur-sm"
+        onClick={() => !saving && onClose()}
+      />
+      <div className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white shadow-[0_24px_64px_rgba(15,23,42,0.2)] dark:border-[#1E293B] dark:bg-[#0F172A]">
+        <div className="flex items-center justify-between gap-3 border-b border-[#E2E8F0] p-5 dark:border-[#1E293B]">
+          <div>
+            <h3 className="text-lg font-bold text-[#0F172A] dark:text-white">
+              Record payment
+            </h3>
+            <p className="mt-0.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+              {order.orderId} · {order.clientDetails.businessName}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            aria-label="Close payment"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#E2E8F0] text-[#64748B] transition-colors hover:text-[#0F172A] disabled:opacity-50 dark:border-[#334155] dark:text-[#94A3B8] dark:hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-2 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                Bill
+              </p>
+              <p className="mt-0.5 text-sm font-bold text-[#0F172A] dark:text-white">
+                {money(totalBill)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-2 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                Paid
+              </p>
+              <p className="mt-0.5 text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                {money(alreadyPaid)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-2 py-2 dark:border-[#334155] dark:bg-[#0F172A]">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                Remaining
+              </p>
+              <p className="mt-0.5 text-sm font-bold text-rose-600 dark:text-rose-400">
+                {money(remaining)}
+              </p>
+            </div>
+          </div>
+
+          <label className="mt-4 flex flex-col gap-1">
+            <span className="text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
+              Amount received
+            </span>
+            <div className="flex items-center gap-2">
+              <NumberInput
+                value={Number(amount) || 0}
+                min={0}
+                allowDecimal
+                onValueChange={(n) => setAmount(n === 0 ? "" : String(n))}
+                className={`${inputClass} flex-1`}
+                placeholder="0"
+              />
+              <button
+                type="button"
+                onClick={() => setAmount(String(remaining))}
+                className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-[#2FB9BF]/40 px-3 text-xs font-semibold text-[#0E7A80] transition-colors hover:bg-[#E6F7F8] dark:text-[#5EEAD4] dark:hover:bg-[#163A3B]"
+              >
+                Full amount
+              </button>
+            </div>
+          </label>
+
+          <label className="mt-3 flex flex-col gap-1">
+            <span className="text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
+              Method (optional)
+            </span>
+            <SelectDropdown
+              value={method}
+              placeholder="Not specified"
+              options={[
+                { label: "Not specified", value: "" },
+                { label: "Cash", value: "Cash" },
+                { label: "Bank transfer", value: "Bank transfer" },
+                { label: "Online transfer", value: "Online transfer" },
+                { label: "Cheque", value: "Cheque" },
+                { label: "Other", value: "Other" },
+              ]}
+              onSelect={setMethod}
+            />
+          </label>
+
+          <label className="mt-3 flex flex-col gap-1">
+            <span className="text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
+              Note (optional)
+            </span>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className={inputClass}
+              placeholder={order.status === "DELIVERED" ? "e.g. Final payment" : "e.g. Advance payment"}
+            />
+          </label>
+
+          <p className="mt-3 text-xs text-[#94A3B8]">
+            {order.status === "DELIVERED"
+              ? "This order is delivered. If a balance remains, reminders are sent every 2 days until it is settled."
+              : "This order is not delivered yet. The amount will be recorded as an advance payment."}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-[#E2E8F0] p-4 dark:border-[#1E293B]">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-[#E2E8F0] px-4 text-sm font-semibold text-[#475569] transition-colors hover:border-[#2FB9BF]/50 disabled:opacity-50 dark:border-[#334155] dark:text-[#94A3B8]"
+          >
+            Skip for now
+          </button>
+          <button
+            type="button"
+            onClick={() => onRecord(parsed, method, note)}
+            disabled={saving || invalid}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#2FB9BF] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#0BAEC4] disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            Record payment
+          </button>
         </div>
       </div>
     </div>
@@ -1389,13 +1861,11 @@ function EditOrderModal({
               <label className="mb-1.5 block text-xs font-semibold text-[#475569] dark:text-[#94A3B8]">
                 Delivery / Dispatch Date
               </label>
-              <input
-                type="date"
+              <DatePicker
                 value={form.deliveryDate}
-                onChange={(e) =>
-                  setForm((p) => ({ ...p, deliveryDate: e.target.value }))
+                onChange={(value) =>
+                  setForm((p) => ({ ...p, deliveryDate: value }))
                 }
-                className={inputClass}
               />
             </div>
             <div>
