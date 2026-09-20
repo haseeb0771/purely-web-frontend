@@ -61,11 +61,13 @@ async function apiRequest<T>(
 export const API_BASE_URL = (() => {
   const fromEnv = process.env.API_URL;
   if (fromEnv) return fromEnv.replace(/\/+$/, "");
-  if (typeof window !== "undefined") {
-    // Same host as the page (works from any device: laptop, phone, LAN IP,
-    // and in production where frontend + backend share a host). Backend :5000.
+  if (typeof window !== "undefined" && window.location.protocol === "http:") {
+    // Dev / LAN: same host the page was loaded from (works from ANY device:
+    // PC 'localhost', phone/LAN 'http://192.168.x.x'). Backend runs on :5000.
     return `${window.location.protocol}//${window.location.hostname}:5000`;
   }
+  // Production (https) or pre-render: env override, else classic localhost
+  // (production deploys supply API_URL so they never hit this default).
   return "http://localhost:5000";
 })();
 
