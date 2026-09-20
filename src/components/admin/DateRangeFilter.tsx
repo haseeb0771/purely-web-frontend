@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CalendarRange, ChevronDown, X, Clock } from "lucide-react";
+import { CalendarRange, ChevronDown, X } from "lucide-react";
+import DatePicker from "@/components/admin/DatePicker";
+import TimePicker from "@/components/admin/TimePicker";
 
 export interface DateRange {
   from: string;
@@ -16,8 +18,28 @@ function toLocalInputValue(date: Date): string {
   );
 }
 
-const inputClass =
-  "w-full rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-sm text-[#0F172A] outline-none transition-colors focus:border-[#2FB9BF] focus:ring-2 focus:ring-[#2FB9BF]/20 dark:border-[#334155] dark:bg-[#0F172A] dark:text-white";
+function splitValue(value: string): { date: string; time: string } {
+  if (!value) return { date: "", time: "" };
+  const [datePart, timePart = ""] = value.split("T");
+  return { date: datePart ?? "", time: timePart.slice(0, 5) };
+}
+
+function composeValue(date: string, time: string): string {
+  if (!date) return "";
+  return `${date}T${time || "00:00"}`;
+}
+
+function formatRangePoint(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export default function DateRangeFilter({
   from,
@@ -30,12 +52,22 @@ export default function DateRangeFilter({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [draftFrom, setDraftFrom] = useState(from);
-  const [draftTo, setDraftTo] = useState(to);
+
+  const initialFrom = splitValue(from);
+  const initialTo = splitValue(to);
+
+  const [draftFromDate, setDraftFromDate] = useState(initialFrom.date);
+  const [draftFromTime, setDraftFromTime] = useState(initialFrom.time);
+  const [draftToDate, setDraftToDate] = useState(initialTo.date);
+  const [draftToTime, setDraftToTime] = useState(initialTo.time);
 
   useEffect(() => {
-    setDraftFrom(from);
-    setDraftTo(to);
+    const nextFrom = splitValue(from);
+    const nextTo = splitValue(to);
+    setDraftFromDate(nextFrom.date);
+    setDraftFromTime(nextFrom.time);
+    setDraftToDate(nextTo.date);
+    setDraftToTime(nextTo.time);
   }, [from, to, open]);
 
   useEffect(() => {
@@ -59,7 +91,10 @@ export default function DateRangeFilter({
   };
 
   const applyCustom = () => {
-    onChange({ from: draftFrom, to: draftTo });
+    onChange({
+      from: composeValue(draftFromDate, draftFromTime),
+      to: composeValue(draftToDate, draftToTime),
+    });
     setOpen(false);
   };
 
@@ -80,11 +115,15 @@ export default function DateRangeFilter({
         <CalendarRange className="h-4 w-4 text-[#2FB9BF]" />
         <span>
           {hasRange
-            ? `${from || "Start"} → ${to || "End"}`
+            ? `${formatRangePoint(from) || "Start"} → ${
+                formatRangePoint(to) || "End"
+              }`
             : "Date range"}
         </span>
         <ChevronDown
-          className={`h-4 w-4 text-[#94A3B8] transition-transform ${open ? "rotate-180" : ""}`}
+          className={`h-4 w-4 text-[#94A3B8] transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
         />
       </button>
 
@@ -100,7 +139,7 @@ export default function DateRangeFilter({
       )}
 
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-2 w-72 rounded-2xl border border-[#E2E8F0] bg-white p-4 shadow-[0_16px_48px_rgba(15,23,42,0.14)] dark:border-[#1E293B] dark:bg-[#0F172A] dark:shadow-none">
+        <div className="absolute right-0 top-full z-40 mt-2 w-[23rem] max-w-[calc(100vw-2rem)] rounded-2xl border border-[#E2E8F0] bg-white p-4 shadow-[0_16px_48px_rgba(15,23,42,0.14)] dark:border-[#1E293B] dark:bg-[#0F172A] dark:shadow-none">
           <p className="mb-3 text-sm font-bold text-[#0F172A] dark:text-white">
             Date range
           </p>
@@ -123,28 +162,54 @@ export default function DateRangeFilter({
           </div>
 
           <div className="space-y-3">
-            <label className="block">
-              <span className="mb-1 flex items-center gap-1 text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
-                <Clock className="h-3.5 w-3.5" /> From
+            <div>
+              <span className="mb-1 block text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
+                From
               </span>
-              <input
-                type="datetime-local"
-                value={draftFrom}
-                onChange={(e) => setDraftFrom(e.target.value)}
-                className={inputClass}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 flex items-center gap-1 text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
-                <Clock className="h-3.5 w-3.5" /> To
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1">
+                  <DatePicker
+                    value={draftFromDate}
+                    onChange={setDraftFromDate}
+                    placeholder="From date"
+                    label="From date"
+                    allowPast
+                  />
+                </div>
+                <div className="w-28 shrink-0">
+                  <TimePicker
+                    value={draftFromTime}
+                    onChange={setDraftFromTime}
+                    placeholder="Time"
+                    label="From time"
+                  />
+                </div>
+              </div>
+            </div>
+            <div>
+              <span className="mb-1 block text-xs font-semibold text-[#64748B] dark:text-[#94A3B8]">
+                To
               </span>
-              <input
-                type="datetime-local"
-                value={draftTo}
-                onChange={(e) => setDraftTo(e.target.value)}
-                className={inputClass}
-              />
-            </label>
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1">
+                  <DatePicker
+                    value={draftToDate}
+                    onChange={setDraftToDate}
+                    placeholder="To date"
+                    label="To date"
+                    allowPast
+                  />
+                </div>
+                <div className="w-28 shrink-0">
+                  <TimePicker
+                    value={draftToTime}
+                    onChange={setDraftToTime}
+                    placeholder="Time"
+                    label="To time"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="mt-4 flex items-center gap-2">

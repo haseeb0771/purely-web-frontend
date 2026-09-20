@@ -594,10 +594,11 @@ function LabelTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[780px] border-collapse text-left">
+      <table className="w-full min-w-[840px] border-collapse text-left">
         <thead>
           <tr className="border-b border-[#E2E8F0] dark:border-[#1E293B] text-xs font-bold uppercase tracking-wider text-[#64748B] dark:text-[#94A3B8]">
             <th className="px-6 py-3">ID</th>
+            <th className="px-6 py-3">Image</th>
             <th className="px-6 py-3">Name</th>
             <th className="px-6 py-3 text-right">Total Qty</th>
             <th className="px-6 py-3 text-right">Total Stock Cost</th>
@@ -616,7 +617,23 @@ function LabelTable({
               0
             );
             const costPerPiece =
-              totalQty > 0 ? Math.round((totalCost / totalQty) * 100) / 100 : 0;
+              totalQty > 0
+                ? Math.round(
+                    (label.sizeDetails.reduce((sum, sd) => {
+                      const qty = Number(sd.quantity) || 0;
+                      const stored = Number(sd.unitCostPrice) || 0;
+                      const unit =
+                        stored > 0
+                          ? stored
+                          : qty > 0
+                            ? (Number(sd.totalCostPrice) || 0) / qty
+                            : 0;
+                      return sum + qty * unit;
+                    }, 0) /
+                      totalQty) *
+                      100
+                  ) / 100
+                : 0;
             return (
               <tr
                 key={label._id}
@@ -627,6 +644,21 @@ function LabelTable({
                   <span className="rounded-lg bg-[#E6F7F8] dark:bg-[#163A3B] px-2.5 py-1 font-mono text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4] ring-1 ring-[#2FB9BF]/30">
                     {label.customId}
                   </span>
+                </td>
+                <td className="px-6 py-4">
+                  <ImageHoverPreview src={label.imageUrl} alt={label.name} className="h-11 w-11 overflow-hidden rounded-xl border border-[#E2E8F0] dark:border-[#1E293B]">
+                    {label.imageUrl && (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={label.imageUrl}
+                      alt={label.name}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.opacity = "0.15";
+                      }}
+                    />
+                     )}
+                  </ImageHoverPreview>
                 </td>
                 <td className="px-6 py-4 text-sm font-semibold text-[#0F172A] dark:text-white">
                   {label.name}
@@ -993,7 +1025,8 @@ function AuditDrawer({
         <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#1E293B] p-5">
           <div className="flex items-center gap-3">
             <ImageHoverPreview src={label.imageUrl} alt={label.name} className="h-12 w-12 overflow-hidden rounded-xl border border-[#E2E8F0] dark:border-[#1E293B]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {label.imageUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={label.imageUrl}
                 alt={label.name}
@@ -1002,6 +1035,7 @@ function AuditDrawer({
                   (e.target as HTMLImageElement).style.opacity = "0.15";
                 }}
               />
+               )}
             </ImageHoverPreview>
             <div>
               <p className="font-mono text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
@@ -1042,7 +1076,7 @@ function AuditDrawer({
                     <th className="px-3 py-2">Size</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Total Cost</th>
-                    <th className="px-3 py-2 text-right">Unit Cost</th>
+                    <th className="px-3 py-2 text-right">Cost per piece</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F1F5F9] dark:divide-[#1E293B]">

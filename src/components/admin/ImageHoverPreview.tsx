@@ -11,12 +11,13 @@ export default function ImageHoverPreview({
   previewSize = PREVIEW_SIZE,
   className,
 }: {
-  src: string;
+  src?: string | null;
   alt: string;
   children: ReactNode;
   previewSize?: number;
   className?: string;
 }) {
+  const hasSrc = typeof src === "string" && src.trim().length > 0;
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [show, setShow] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -45,7 +46,7 @@ export default function ImageHoverPreview({
       <div className={className} onMouseMove={onMouseMove} onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
         {children}
       </div>
-      {show && (
+      {show && hasSrc && (
         <div
           ref={previewRef}
           className="pointer-events-none fixed z-[60] overflow-hidden rounded-xl border border-[#E2E8F0] bg-white p-1 shadow-[0_16px_48px_rgba(15,23,42,0.2)] dark:border-[#1E293B] dark:bg-[#0F172A]"
@@ -58,7 +59,7 @@ export default function ImageHoverPreview({
           )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={src}
+            src={hasSrc ? src : undefined}
             alt={alt}
             className="h-full w-full rounded-lg object-contain"
             onLoad={() => setReady(true)}

@@ -6,9 +6,9 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   ChevronDown,
-  Droplets,
   PanelLeftClose,
   PanelLeftOpen,
+  Settings,
   X,
 } from "lucide-react";
 import {
@@ -16,6 +16,7 @@ import {
   findActiveGroup,
   type AdminNavItem,
 } from "./admin-nav";
+import { ApiError, fetchStockAlerts } from "@/lib/admin-api";
 
 interface AdminSidebarProps {
   collapsed: boolean;
@@ -43,12 +44,31 @@ export default function AdminSidebar({
 
   const activeGroup = findActiveGroup(adminNavItems, pathname);
 
+  const [stockAlertCount, setStockAlertCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchStockAlerts()
+      .then((alerts) => {
+        if (!cancelled) setStockAlertCount(alerts.length);
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status !== 401) {
+          console.error("[sidebar] failed to load stock alert count:", err);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (previousPathname.current === pathname) return;
     previousPathname.current = pathname;
 
-    setOpenGroups((current) => {
-      const next = { ...current };
+    setOpenGroups(() => {
+      const next: Record<string, boolean> = {};
       for (const item of adminNavItems) {
         if (item.type === "group") {
           const matches = item.children.some((child) =>
@@ -68,7 +88,6 @@ export default function AdminSidebar({
       return;
     }
     setOpenGroups((current) => ({
-      ...current,
       [item.label]: !current[item.label],
     }));
   }
@@ -105,7 +124,12 @@ export default function AdminSidebar({
               }`}
             />
             {!collapsed && <span className="truncate">{item.label}</span>}
-            {!collapsed && active && (
+            {!collapsed && item.badge === "stock-alerts" && stockAlertCount > 0 && (
+              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#FEE2E2] px-1.5 text-[11px] font-bold text-[#B91C1C] dark:bg-[#7F1D1D]/60 dark:text-[#FECACA]">
+                {stockAlertCount}
+              </span>
+            )}
+            {!collapsed && active && !(item.badge === "stock-alerts") && (
               <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#2FB9BF]" />
             )}
           </Link>
@@ -268,14 +292,17 @@ export default function AdminSidebar({
             )}
           </button>
 
-          <div
-            className={`mt-2 flex items-center gap-2 rounded-xl bg-[#F8FAFC] px-3 py-2 text-[11px] font-medium text-[#94A3B8] dark:bg-[#1E293B] dark:text-[#64748B] ${
+          <Link
+            href="/admin/settings"
+            title="Settings"
+            onClick={handleMobileNavClick}
+            className={`flex w-full items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-[#475569] transition-all duration-200 hover:border-[#2FB9BF]/40 hover:bg-[#F8FAFC] hover:text-[#0F172A] dark:text-[#94A3B8] dark:hover:border-[#2FB9BF]/40 dark:hover:bg-[#1E293B] dark:hover:text-[#E2E8F0] ${
               collapsed ? "justify-center" : ""
             }`}
           >
-            <Droplets className={`h-3.5 w-3.5 shrink-0 text-[#2FB9BF]`} />
-            {!collapsed && <span>v1.0 — Purely Admin</span>}
-          </div>
+            <Settings className="h-5 w-5 shrink-0 text-[#64748B] group-hover:text-[#2FB9BF]" />
+            {!collapsed && <span className="truncate">Settings</span>}
+          </Link>
         </div>
       </aside>
     </>

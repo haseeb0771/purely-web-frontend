@@ -7,6 +7,8 @@ import {
   Boxes,
   ReceiptText,
   TrendingUp,
+  Coins,
+  Clock,
   Loader2,
   Inbox,
 } from "lucide-react";
@@ -118,6 +120,20 @@ export default function FinanceOverviewPage() {
       iconBg: "bg-rose-500/10",
     },
     {
+      label: "Payments Received",
+      value: summary?.collections ?? 0,
+      icon: Coins,
+      accent: "text-emerald-600 dark:text-emerald-400",
+      iconBg: "bg-emerald-500/10",
+    },
+    {
+      label: "Pending Collections",
+      value: summary?.pendingCollections ?? 0,
+      icon: Clock,
+      accent: "text-amber-600 dark:text-amber-400",
+      iconBg: "bg-amber-500/10",
+    },
+    {
       label: "Profit / Remaining",
       value: summary?.profit ?? 0,
       icon: TrendingUp,
@@ -145,10 +161,70 @@ export default function FinanceOverviewPage() {
         </div>
       ) : (
         <div className="space-y-6 p-4 sm:p-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cards.map((card) => (
               <SummaryCard key={card.label} {...card} />
             ))}
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white dark:border-[#1E293B] dark:bg-[#0F172A]">
+            <div className="border-b border-[#E2E8F0] px-5 py-4 dark:border-[#1E293B]">
+              <h3 className="text-sm font-bold text-[#0F172A] dark:text-white">
+                Pending payments
+              </h3>
+              <p className="mt-0.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+                Delivered orders with an outstanding balance (top 10 by bill)
+              </p>
+            </div>
+            {!summary?.pendingPayments?.length ? (
+              <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+                <Inbox className="h-8 w-8 text-[#CBD5E1]" />
+                <p className="text-sm text-[#94A3B8]">
+                  No pending payments. Everything is settled.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-[#E2E8F0] text-xs font-bold uppercase tracking-wider text-[#64748B] dark:border-[#1E293B] dark:text-[#94A3B8]">
+                      <th className="px-5 py-3">Order</th>
+                      <th className="px-5 py-3">Business</th>
+                      <th className="px-5 py-3 text-right">Bill</th>
+                      <th className="px-5 py-3 text-right">Paid</th>
+                      <th className="px-5 py-3 text-right">Pending</th>
+                      <th className="px-5 py-3">Delivered</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#F1F5F9] dark:divide-[#1E293B]">
+                    {summary.pendingPayments.map((payment) => (
+                      <tr key={payment.orderId} className="hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]">
+                        <td className="px-5 py-3">
+                          <span className="rounded-lg bg-[#E6F7F8] dark:bg-[#163A3B] px-2.5 py-1 font-mono text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4] ring-1 ring-[#2FB9BF]/30">
+                            {payment.orderId}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-sm font-semibold text-[#0F172A] dark:text-white">
+                          {payment.businessName}
+                        </td>
+                        <td className="px-5 py-3 text-right text-sm text-[#64748B] dark:text-[#94A3B8]">
+                          {formatCurrency(payment.totalBill)}
+                        </td>
+                        <td className="px-5 py-3 text-right text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(payment.totalPaid)}
+                        </td>
+                        <td className="px-5 py-3 text-right text-sm font-bold text-rose-600 dark:text-rose-400">
+                          {formatCurrency(payment.pendingAmount)}
+                        </td>
+                        <td className="px-5 py-3 text-xs text-[#64748B] dark:text-[#94A3B8]">
+                          {formatDate(payment.deliveredAt ?? undefined)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">

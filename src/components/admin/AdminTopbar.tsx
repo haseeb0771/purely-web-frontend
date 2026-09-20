@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -18,12 +18,14 @@ import {
   disconnectAdminSocket,
   subscribeAdminActivity,
   subscribeInventoryNotification,
+  subscribeMarketingReminder,
   subscribeNewInquiry,
+  subscribePaymentReminder,
+  subscribeStockAlert,
 } from "@/lib/admin-socket";
 import {
   ApiError,
   fetchNotifications,
-  fetchUnreadNotificationCount,
   markNotificationsRead,
   type AdminNotification,
   type SanitizedAdmin,
@@ -35,6 +37,7 @@ interface NotificationItem {
   hint: string;
   href?: string;
   receivedAt: string;
+  read: boolean;
 }
 
 interface AdminTopbarProps {
@@ -124,6 +127,35 @@ function inventoryNotificationFromPayload(payload: unknown): Pick<
   };
 }
 
+function stockAlertFromPayload(payload: unknown): Pick<
+  NotificationItem,
+  "title" | "hint" | "href"
+> {
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const title =
+      typeof record.title === "string" ? record.title : "Low Stock Alert";
+    const message =
+      typeof record.message === "string" ? record.message : undefined;
+    const moduleName =
+      typeof record.module === "string" ? record.module : undefined;
+    const itemId =
+      typeof record.itemId === "string" ? record.itemId : undefined;
+    const href =
+      moduleName && itemId
+        ? `/admin/inventory/${moduleName}?open=${itemId}`
+        : moduleName
+        ? `/admin/inventory/${moduleName}`
+        : "/admin/inventory/stock-alerts";
+    return { title, hint: message ?? "Inventory is running low.", href };
+  }
+  return {
+    title: "Low Stock Alert",
+    hint: "Inventory is running low.",
+    href: "/admin/inventory/stock-alerts",
+  };
+}
+
 function notificationItemFromApi(n: AdminNotification): NotificationItem {
   return {
     id: n.id,
@@ -131,6 +163,61 @@ function notificationItemFromApi(n: AdminNotification): NotificationItem {
     hint: n.message,
     href: n.href || undefined,
     receivedAt: n.createdAt,
+    read: n.read,
+  };
+}
+
+function paymentReminderFromPayload(payload: unknown): Pick<
+  NotificationItem,
+  "title" | "hint" | "href"
+> {
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const orderId =
+      typeof record.orderId === "string" ? record.orderId : undefined;
+    const businessName =
+      typeof record.businessName === "string" ? record.businessName : undefined;
+    const pending =
+      typeof record.pending === "number" ? record.pending : undefined;
+    const parts: string[] = [];
+    if (pending !== undefined) parts.push(`Rs. ${pending.toLocaleString("en-US")} pending`);
+    if (orderId) parts.push(`order ${orderId}`);
+    if (businessName) parts.push(businessName);
+    return {
+      title: "Payment reminder",
+      hint: parts.join(" · ") || "An order has an outstanding balance.",
+      href: "/admin/orders",
+    };
+  }
+  return {
+    title: "Payment reminder",
+    hint: "An order has an outstanding balance.",
+    href: "/admin/orders",
+  };
+}
+
+function marketingReminderFromPayload(payload: unknown): Pick<
+  NotificationItem,
+  "title" | "hint" | "href"
+> {
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const businessName =
+      typeof record.businessName === "string" ? record.businessName : undefined;
+    const message =
+      typeof record.message === "string" ? record.message : undefined;
+    const itemId =
+      typeof record.itemId === "string" ? record.itemId : undefined;
+    return {
+      title: "Follow-up reminder",
+      hint: [businessName, message].filter(Boolean).join(" · ") || "A client follow-up is due.",
+      href: itemId ? `/admin/marketing?open=${itemId}` : "/admin/marketing",
+    };
+  }
+  return {
+    title: "Follow-up reminder",
+    hint: "A client follow-up is due.",
+    href: "/admin/marketing",
   };
 }
 
@@ -160,13 +247,42 @@ export default function AdminTopbar({
   const [toast, setToast] = useState<NotificationItem | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const router = useRouter();
+  const bellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutsideClick(event: MouseEvent) {
+      if (bellRef.current && !bellRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [open]);
 
   const navigateTo = (href?: string) => {
     if (!href) return;
     setToast(null);
-    setOpen(false);
+    closeBell();
     router.push(href);
   };
+
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const result = await fetchNotifications({ page: 1, pageSize: 20 });
+      const items = result.data.map(notificationItemFromApi);
+      setNotifications((current) => {
+        const existingIds = new Set(current.map((n) => n.id));
+        const merged = [...items.filter((n) => !existingIds.has(n.id)), ...current];
+        return merged.slice(0, 20);
+      });
+      setUnread(result.totalUnread);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== 401) {
+        console.error("[notifications] failed to load:", err);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     let initialLoadCancelled = false;
@@ -207,6 +323,7 @@ export default function AdminTopbar({
         hint,
         href,
         receivedAt: new Date().toISOString(),
+        read: false,
       };
       setNotifications((current) => [item, ...current].slice(0, 20));
       setUnread((count) => count + 1);
@@ -230,6 +347,21 @@ export default function AdminTopbar({
       pushNotification(next.title, next.hint, next.href);
     });
 
+    const unsubscribeStockAlert = subscribeStockAlert((payload) => {
+      const next = stockAlertFromPayload(payload);
+      pushNotification(next.title, next.hint, next.href);
+    });
+
+    const unsubscribePaymentReminder = subscribePaymentReminder((payload) => {
+      const next = paymentReminderFromPayload(payload);
+      pushNotification(next.title, next.hint, next.href);
+    });
+
+    const unsubscribeMarketingReminder = subscribeMarketingReminder((payload) => {
+      const next = marketingReminderFromPayload(payload);
+      pushNotification(next.title, next.hint, next.href);
+    });
+
     return () => {
       initialLoadCancelled = true;
       activeSocket.off("connect", handleConnect);
@@ -238,18 +370,41 @@ export default function AdminTopbar({
       unsubscribeInquiry();
       unsubscribeActivity();
       unsubscribeInventory();
+      unsubscribeStockAlert();
+      unsubscribePaymentReminder();
+      unsubscribeMarketingReminder();
       if (toastTimer) clearTimeout(toastTimer);
       disconnectAdminSocket();
     };
   }, []);
 
-  function toggleBell() {
-    setOpen((value) => !value);
+  function closeBell() {
+    setOpen(false);
     setUnread(0);
+    setNotifications((current) =>
+      current.map((n) => ({ ...n, read: true })),
+    );
+    void markNotificationsRead([]).catch((err) => {
+      if (err instanceof ApiError && err.status !== 401) {
+        console.error("[notifications] mark-read failed:", err);
+      }
+    });
+  }
+
+  function toggleBell() {
+    if (open) {
+      closeBell();
+    } else {
+      void refreshNotifications();
+      setOpen(true);
+    }
   }
 
   function markAllRead() {
     setUnread(0);
+    setNotifications((current) =>
+      current.map((n) => ({ ...n, read: true })),
+    );
     void markNotificationsRead([]).catch((err) => {
       if (err instanceof ApiError && err.status !== 401) {
         console.error("[notifications] mark-read failed:", err);
@@ -322,7 +477,7 @@ return (
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">
-        <div className="relative">
+        <div ref={bellRef} className="relative">
           <button
             type="button"
             onClick={toggleBell}
@@ -383,15 +538,27 @@ return (
                     {notifications.map((notification) => (
                       <li
                         key={notification.id}
-                        className={`flex gap-3 px-4 py-3${notification.href ? " cursor-pointer transition-colors hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]" : ""}`}
+                        className={`flex gap-3 border-l-4 px-4 py-3 ${
+                          notification.read
+                            ? "border-l-transparent"
+                            : "border-l-[#2FB9BF] bg-[#F0FDFB] dark:border-l-[#5EEAD4] dark:bg-[#14202b]"
+                        }${notification.href ? " cursor-pointer transition-colors hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B]" : ""}`}
                         onClick={notification.href ? () => navigateTo(notification.href) : undefined}
                       >
-                        <span className="relative mt-1.5 flex h-2 w-2 shrink-0">
+                        <span
+                          className={`relative mt-1.5 flex h-2 w-2 shrink-0 ${
+                            notification.read ? "opacity-0" : ""
+                          }`}
+                        >
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2FB9BF] opacity-40" />
                           <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2FB9BF]" />
                         </span>
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-[#0F172A] dark:text-white">
+                          <p className={`truncate text-sm ${
+                            notification.read
+                              ? "font-medium text-[#475569] dark:text-[#CBD5E1]"
+                              : "font-bold text-[#0F172A] dark:text-white"
+                          }`}>
                             {notification.title}
                           </p>
                           <p className="truncate text-xs text-[#64748B] dark:text-[#94A3B8]">
@@ -401,6 +568,11 @@ return (
                             {formatRelativeTime(notification.receivedAt)}
                           </p>
                         </div>
+                        {!notification.read && (
+                          <span className="ml-auto shrink-0 self-center rounded-full bg-[#2FB9BF] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white dark:bg-[#5EEAD4] dark:text-[#0E7A80]">
+                            New
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>

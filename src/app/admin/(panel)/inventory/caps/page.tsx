@@ -27,7 +27,7 @@ import {
   createColor,
   deleteCap,
   fetchCaps,
-  fetchColors,
+  fetchColorsPaginated,
   updateCap,
   uploadBottleImage,
   type Cap,
@@ -72,6 +72,9 @@ export default function CapsInventoryPage() {
 
   // color list + add-new-color modal state
   const [colors, setColors] = useState<Color[]>([]);
+  const [colorPage, setColorPage] = useState(1);
+  const [colorHasMore, setColorHasMore] = useState(false);
+  const [loadingMoreColors, setLoadingMoreColors] = useState(false);
   const [showColorModal, setShowColorModal] = useState(false);
   const [newColorName, setNewColorName] = useState("");
   const [newColorValue, setNewColorValue] = useState("");
@@ -120,16 +123,33 @@ export default function CapsInventoryPage() {
 
   const loadColors = useCallback(async () => {
     try {
-      const data = await fetchColors();
-      setColors(data);
+      const result = await fetchColorsPaginated(1, 20);
+      setColors(result.data);
+      setColorHasMore(result.hasMore);
+      setColorPage(1);
     } catch {
       setColors([]);
+      setColorHasMore(false);
     }
   }, []);
 
   useEffect(() => {
     void loadColors();
   }, [loadColors]);
+
+  function loadMoreColors() {
+    if (!colorHasMore || loadingMoreColors) return;
+    const nextPage = colorPage + 1;
+    setLoadingMoreColors(true);
+    void fetchColorsPaginated(nextPage, 20)
+      .then((result) => {
+        setColors((prev) => [...prev, ...result.data]);
+        setColorHasMore(result.hasMore);
+        setColorPage(nextPage);
+      })
+      .catch(() => setColorHasMore(false))
+      .finally(() => setLoadingMoreColors(false));
+  }
 
   async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -288,6 +308,8 @@ export default function CapsInventoryPage() {
                 onSelect={(v) => setColor(v)}
                 actionLabel="+ Add new color"
                 onAction={openAddColorModal}
+                onReachEnd={loadMoreColors}
+                loadingMore={loadingMoreColors}
               />
             </div>
             <div>
@@ -634,7 +656,8 @@ function CapsTable({
                 </td>
                 <td className="px-6 py-4">
                   <ImageHoverPreview src={cap.imageUrl} alt={cap.color} className="h-10 w-10 overflow-hidden rounded-lg">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {cap.imageUrl && (
+                      /* eslint-disable-next-line @next/next/no-img-element */
                     <img
                       src={cap.imageUrl}
                       alt={cap.color}
@@ -643,6 +666,7 @@ function CapsTable({
                         (e.target as HTMLImageElement).style.opacity = "0.15";
                       }}
                     />
+                     )}
                   </ImageHoverPreview>
                 </td>
                 <td className="px-6 py-4">
@@ -838,7 +862,8 @@ function CapDrawer({
         <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#1E293B] p-5">
           <div className="flex items-center gap-3">
             <ImageHoverPreview src={cap.imageUrl} alt={cap.color} className="h-12 w-12 overflow-hidden rounded-xl border border-[#E2E8F0] dark:border-[#1E293B]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {cap.imageUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={cap.imageUrl}
                 alt={cap.color}
@@ -847,6 +872,7 @@ function CapDrawer({
                   (e.target as HTMLImageElement).style.opacity = "0.15";
                 }}
               />
+               )}
             </ImageHoverPreview>
             <div>
               <p className="font-mono text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">

@@ -5,9 +5,11 @@ import {
   FileClock,
   Inbox,
   LayoutDashboard,
+  Megaphone,
   Package,
   Palette,
   Settings,
+  TriangleAlert,
 } from "lucide-react";
 
 export interface AdminChildLink {
@@ -21,6 +23,7 @@ export interface AdminLinkItem {
   href: string;
   icon: LucideIcon;
   subtitle: string;
+  badge?: "stock-alerts";
 }
 
 export interface AdminGroupItem {
@@ -55,6 +58,28 @@ export const adminNavItems: AdminNavItem[] = [
     subtitle: "Contact form submissions",
   },
   {
+    type: "link",
+    label: "New Label Design",
+    href: "/admin/new-label-design",
+    icon: Palette,
+    subtitle: "AI label mockup studio",
+  },
+  {
+    type: "link",
+    label: "Stock Alerts",
+    href: "/admin/inventory/stock-alerts",
+    icon: TriangleAlert,
+    subtitle: "Low-stock inventory alerts",
+    badge: "stock-alerts",
+  },
+  {
+    type: "link",
+    label: "Marketing",
+    href: "/admin/marketing",
+    icon: Megaphone,
+    subtitle: "Leads, clients & deal pipelines",
+  },
+  {
     type: "group",
     label: "Inventory",
     icon: Package,
@@ -63,15 +88,8 @@ export const adminNavItems: AdminNavItem[] = [
       { label: "Caps", href: "/admin/inventory/caps" },
       { label: "PET Packaging", href: "/admin/inventory/pet-packaging" },
       { label: "Labels", href: "/admin/inventory/labels" },
-      { label: "Stock Alerts", href: "/admin/inventory/stock-alerts" },
+      { label: "Inventory Orders", href: "/admin/inventory/orders" },
     ],
-  },
-  {
-    type: "link",
-    label: "New Label Design",
-    href: "/admin/new-label-design",
-    icon: Palette,
-    subtitle: "AI label mockup studio",
   },
   {
     type: "group",
@@ -90,13 +108,6 @@ export const adminNavItems: AdminNavItem[] = [
       { label: "Overview & Reports", href: "/admin/finance/overview" },
       { label: "Manage Expenses", href: "/admin/finance/expenses" },
     ],
-  },
-  {
-    type: "link",
-    label: "Settings",
-    href: "/admin/settings",
-    icon: Settings,
-    subtitle: "Settings & Admin Profile",
   },
 ];
 

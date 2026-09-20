@@ -604,7 +604,8 @@ function InventoryTable({
                 </td>
                 <td className="px-6 py-4">
                   <ImageHoverPreview src={bottle.imageUrl} alt={bottle.bottleName} className="h-11 w-11 overflow-hidden rounded-xl border border-[#E2E8F0] dark:border-[#1E293B]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    {bottle.imageUrl && (
+                       /* eslint-disable-next-line @next/next/no-img-element */
                     <img
                       src={bottle.imageUrl}
                       alt={bottle.bottleName}
@@ -613,6 +614,7 @@ function InventoryTable({
                         (e.target as HTMLImageElement).style.opacity = "0.15";
                       }}
                     />
+                     )}
                   </ImageHoverPreview>
                 </td>
                 <td className="px-6 py-4 text-sm font-semibold text-[#0F172A] dark:text-white">
@@ -639,9 +641,11 @@ function InventoryTable({
                       .sort((a, b) => b.quantity - a.quantity)
                       .map((sd) => {
                         const unit =
-                          Number(sd.quantity) > 0
-                            ? Number(sd.totalCostPrice) / Number(sd.quantity)
-                            : 0;
+                          Number(sd.unitCostPrice) > 0
+                            ? Number(sd.unitCostPrice)
+                            : Number(sd.quantity) > 0
+                              ? Number(sd.totalCostPrice) / Number(sd.quantity)
+                              : 0;
                         return (
                           <span
                             key={sd.size}
@@ -1016,7 +1020,8 @@ function AuditDrawer({
         <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#1E293B] p-5">
           <div className="flex items-center gap-3">
             <ImageHoverPreview src={bottle.imageUrl} alt={bottle.bottleName} className="h-12 w-12 overflow-hidden rounded-xl border border-[#E2E8F0] dark:border-[#1E293B]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {bottle.imageUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={bottle.imageUrl}
                 alt={bottle.bottleName}
@@ -1025,6 +1030,7 @@ function AuditDrawer({
                   (e.target as HTMLImageElement).style.opacity = "0.15";
                 }}
               />
+               )}
             </ImageHoverPreview>
             <div>
               <p className="font-mono text-xs font-bold text-[#0E7A80] dark:text-[#5EEAD4]">
@@ -1071,7 +1077,7 @@ function AuditDrawer({
                     <th className="px-3 py-2">Size</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Total Cost</th>
-                    <th className="px-3 py-2 text-right">Unit Cost</th>
+                    <th className="px-3 py-2 text-right">Cost per piece</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F1F5F9] dark:divide-[#1E293B]">

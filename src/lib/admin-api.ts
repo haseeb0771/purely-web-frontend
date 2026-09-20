@@ -59,7 +59,7 @@ async function apiRequest<T>(
 }
 
 export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ?? "https://purely-backend.vercel.app"
+  process.env.API_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
@@ -178,6 +178,28 @@ async function apiGet<T>(url: string): Promise<T> {
   return apiRequest<T>(url, { method: "GET" });
 }
 
+/**
+ * GET that returns the full API envelope ({ success, message, data, … })
+ * instead of only the unwrapped `data` array.
+ */
+async function apiGetEnvelope<T>(url: string): Promise<T> {
+  const token = getAuthToken();
+  const authHeader = token ? `Bearer ${token}` : undefined;
+
+  const response = await fetch(`${API_BASE_URL}${url}`, {
+    method: "GET",
+    headers: authHeader ? { Authorization: `Bearer ${token!}` } : undefined,
+    cache: "no-store",
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    throw new ApiError("Session expired. Please log in again.", 401);
+  }
+
+  return parseResponse<T & ApiResponse>(response);
+}
+
 export async function fetchAuditLogs(params?: {
   page?: number;
   pageSize?: number;
@@ -230,7 +252,7 @@ export function fetchInventory(params?: {
 
 export interface AdminNotification {
   id: string;
-  type: "inquiry" | "activity" | "inventory";
+  type: "inquiry" | "activity" | "inventory" | "payment" | "marketing";
   action: string;
   title: string;
   message: string;
@@ -257,13 +279,13 @@ export async function fetchNotifications(params?: {
   if (params?.type) query.set("type", params.type);
 
   const qs = query.toString();
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<AdminNotification[]> & {
       pagination?: Paginated<AdminNotification>["pagination"];
       unreadCount?: number;
       totalUnread?: number;
     }
-  >(`/api/notifications${qs ? `?${qs}` : ""}`, { method: "GET" });
+  >(`/api/notifications${qs ? `?${qs}` : ""}`);
 
   return {
     data: response.data ?? [],
@@ -279,9 +301,9 @@ export async function fetchNotifications(params?: {
 }
 
 export async function fetchUnreadNotificationCount(): Promise<number> {
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<{ unreadCount: number }>
-  >(`/api/notifications/unread-count`, { method: "GET" });
+  >(`/api/notifications/unread-count`);
   return response.data?.unreadCount ?? 0;
 }
 
@@ -329,11 +351,11 @@ export async function fetchInquiries(params?: {
   if (params?.search) query.set("search", params.search);
 
   const qs = query.toString();
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<Inquiry[]> & {
       pagination?: Paginated<Inquiry>["pagination"];
     }
-  >(`/api/inquiries${qs ? `?${qs}` : ""}`, { method: "GET" });
+  >(`/api/inquiries${qs ? `?${qs}` : ""}`);
 
   const data = response.data ?? [];
   const pagination = response.pagination ?? {
@@ -370,6 +392,14 @@ export type BottleSize = "300ml" | "500ml" | "1500ml" | "19L";
 export const BOTTLE_SIZES: BottleSize[] = [
   "300ml",
   "500ml",
+  "1500ml",
+  "19L",
+];
+
+export const PET_PACKAGING_SIZES: string[] = [
+  "300ml",
+  "500ml",
+  "1000ml",
   "1500ml",
   "19L",
 ];
@@ -464,6 +494,14 @@ async function apiSend<T>(
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function apiPatch<T>(url: string, body: unknown = {}): Promise<T> {
+  return apiRequest<T>(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
@@ -575,8 +613,26 @@ export function fetchColors(): Promise<Color[]> {
   return apiGet<Color[]>("/api/colors");
 }
 
+export async function fetchColorsPaginated(
+  page: number,
+  pageSize: number
+): Promise<{ data: Color[]; hasMore: boolean }> {
+  const raw = await apiGet<
+    ApiResponse<Color[]> & { hasMore?: boolean }
+  >(`/api/colors?page=${page}&limit=${pageSize}`);
+  return { data: raw.data ?? [], hasMore: raw.hasMore ?? false };
+}
+
 export function createColor(input: { name: string; value?: string }): Promise<Color> {
   return apiSend<Color>("/api/colors", "POST", input);
+}
+
+export interface PetPackagingSizeDetail {
+  size: string;
+  quantity: number;
+  totalCostPrice: number;
+  unitCostPrice: number;
+  stockAlertLevel: number;
 }
 
 export interface PetPackaging {
@@ -587,6 +643,7 @@ export interface PetPackaging {
   totalCostPrice: number;
   unitCostPrice: number;
   stockAlertLevel: number;
+  sizeDetails: PetPackagingSizeDetail[];
   createdBy: AdminRef;
   updatedByHistory: UpdatedByEntry[];
   createdAt: string;
@@ -594,10 +651,11 @@ export interface PetPackaging {
 }
 
 export interface CreatePetPackagingInput {
-  size: string;
-  quantity: number;
-  totalCostPrice: number;
+  size?: string;
+  quantity?: number;
+  totalCostPrice?: number;
   stockAlertLevel?: number;
+  sizeDetails?: PetPackagingSizeDetail[];
 }
 
 export type UpdatePetPackagingInput = Partial<CreatePetPackagingInput>;
@@ -624,6 +682,20 @@ export function deletePetPackaging(
     `/api/pet-packaging/${id}`,
     "DELETE"
   );
+}
+
+export interface PetPackagingAddInventorySize {
+  size: string;
+  quantity: number;
+  totalCostPrice: number;
+  stockAlertLevel: number;
+}
+
+export function addPetPackagingInventory(
+  id: string,
+  input: { sizeDetails: PetPackagingAddInventorySize[] }
+): Promise<PetPackaging> {
+  return apiSend<PetPackaging>(`/api/pet-packaging/${id}/inventory`, "POST", input);
 }
 
 export interface Label {
@@ -692,13 +764,26 @@ export interface ExpenseRecord {
   date?: string;
 }
 
+export interface PendingPaymentItem {
+  orderId: string;
+  businessName: string;
+  status: OrderStatus;
+  totalBill: number;
+  totalPaid: number;
+  pendingAmount: number;
+  deliveredAt?: string | null;
+}
+
 export interface FinanceSummary {
   budget: number;
   stockInvestment: number;
   otherExpenses: number;
   profit: number;
+  collections: number;
+  pendingCollections: number;
   recentExpenses: ExpenseRecord[];
   byCategory: { category: string; total: number; count: number }[];
+  pendingPayments: PendingPaymentItem[];
 }
 
 export type ExpenseCategoryInput = Pick<ExpenseCategory, "name">;
@@ -729,6 +814,8 @@ export interface DashboardSummary {
   stockInvestment: number;
   otherExpenses: number;
   profit: number;
+  collections: number;
+  pendingCollections: number;
   totalOrders: number;
   monthlyExpenses: DashboardMonthlyExpense[];
   monthlyOrders: DashboardMonthlyOrder[];
@@ -760,6 +847,18 @@ export async function fetchExpenseCategories(): Promise<ExpenseCategory[]> {
   return (raw ?? []).map((c) => ({ id: c._id, name: c.name }));
 }
 
+export async function fetchExpenseCategoriesPaginated(
+  page: number,
+  pageSize: number
+): Promise<{ data: ExpenseCategory[]; hasMore: boolean }> {
+  const raw = await apiGetEnvelope<
+    ApiResponse<(ExpenseCategory & { _id: string })[]> & {
+      hasMore?: boolean;
+    }
+  >(`/api/expenses/categories?page=${page}&limit=${pageSize}`);
+  const list = (raw?.data ?? []).map((c) => ({ id: c._id, name: c.name }));
+  return { data: list, hasMore: raw?.hasMore ?? false };
+}
 export async function createExpenseCategory(
   input: ExpenseCategoryInput
 ): Promise<ExpenseCategory> {
@@ -777,11 +876,11 @@ export async function fetchExpenses(params?: {
   if (params?.category) query.set("category", params.category);
 
   const qs = query.toString();
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<ExpenseRecord[]> & {
       pagination?: Paginated<ExpenseRecord>["pagination"];
     }
-  >(`/api/expenses${qs ? `?${qs}` : ""}`, { method: "GET" });
+  >(`/api/expenses${qs ? `?${qs}` : ""}`);
 
   const data = response.data ?? [];
   const pagination = response.pagination ?? {
@@ -808,7 +907,26 @@ export function deleteExpense(id: string): Promise<{ id: string }> {
 /*  Label Orders                                                       */
 /* ------------------------------------------------------------------ */
 
-export type OrderStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "CANCELLED";
+export type OrderStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "DELIVERED"
+  | "CANCELLED";
+
+export type OrderPaymentStatus = "PAID" | "PARTIAL" | "UNPAID";
+
+export type OrderPaymentSource = "ADVANCE" | "PAYMENT";
+
+export interface OrderPaymentEntry {
+  amount: number;
+  paidAt: string;
+  method?: string;
+  note?: string;
+  source?: OrderPaymentSource;
+  recordedBy?: string;
+  recordedByName?: string;
+}
 
 export interface SizeSelection {
   size: BottleSize;
@@ -875,6 +993,22 @@ export function fetchBottlesBySizes(sizes: BottleSize[]): Promise<Bottle[]> {
   );
 }
 
+export async function fetchBottlesBySizesPaginated(
+  sizes: BottleSize[],
+  page: number,
+  limit: number
+): Promise<{ data: Bottle[]; hasMore: boolean }> {
+  if (sizes.length === 0) return { data: [], hasMore: false };
+  const raw = await apiGetEnvelope<
+    ApiResponse<Bottle[]> & { hasMore?: boolean }
+  >(
+    `/api/inventory/bottles-by-sizes?sizes=${encodeURIComponent(
+      sizes.join(",")
+    )}&page=${page}&limit=${limit}`
+  );
+  return { data: raw?.data ?? [], hasMore: raw?.hasMore ?? false };
+}
+
 export function fetchAvailableCaps(): Promise<Cap[]> {
   return apiGet<Cap[]>("/api/inventory/caps");
 }
@@ -894,7 +1028,7 @@ export async function fetchPaginatedLabels(params?: {
 }> {
   const page = params?.page ?? 1;
   const limit = params?.limit ?? 10;
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<Label[]> & {
       pagination?: {
         page: number;
@@ -904,7 +1038,7 @@ export async function fetchPaginatedLabels(params?: {
         hasMore: boolean;
       };
     }
-  >(`/api/inventory/labels?page=${page}&limit=${limit}`, { method: "GET" });
+  >(`/api/inventory/labels?page=${page}&limit=${limit}`);
 
   const data = response.data ?? [];
   return {
@@ -981,9 +1115,60 @@ export function deleteLabelOrder(
 
 export type { OrderStatus as OrderResponseStatus };
 
+export interface BottlePriceLine {
+  size: string;
+  quantity: number;
+  petCount: number;
+  bottlesPerPET: number;
+  costPerUnit: number;
+  petPackCostPerUnit: number;
+  waterCostPerBottle: number;
+  costPerBottle: number;
+  costPerPET: number;
+  bottleCostAmount: number;
+  petPackCostAmount: number;
+  waterCostAmount: number;
+  costAmount: number;
+  sellPerPET?: number;
+  sellPerUnit?: number;
+  sellAmount?: number;
+}
+
+export interface PetPriceLine {
+  size: string;
+  quantity: number;
+  costPerUnit: number;
+  costAmount: number;
+  sellPerUnit?: number;
+  sellAmount?: number;
+}
+
+export interface PriceBreakdownData {
+  bottleLines: BottlePriceLine[];
+  petLines: PetPriceLine[];
+  componentTotals: {
+    bottles: number;
+    caps: number;
+    labels: number;
+    pet: number;
+    water: number;
+  };
+  water: { liters: number; rate: number; amount: number };
+  totals: { cost: number; sell: number; profit: number };
+}
+
+export interface SizeBottleSelection {
+  size: BottleSize;
+  bottleId: string;
+  petCount: number;
+  bottleCount: number;
+}
+
 export interface OrderResponse {
   _id: string;
   orderId: string;
+  clientId?: string | null;
+  priceBreakdown?: PriceBreakdownData;
   clientDetails: {
     businessName: string;
     ownerName: string;
@@ -995,6 +1180,7 @@ export interface OrderResponse {
     sizes: BottleSize[];
     bottleId: Bottle;
     sizeQuantities: SizeQuantity[];
+    sizeBottles?: SizeBottleSelection[];
   };
   capSelection: {
     capId: Cap;
@@ -1004,6 +1190,7 @@ export interface OrderResponse {
     type: "NEW_DESIGN" | "EXISTING_INVENTORY";
     logoImageUrl: string;
     labelId: Label | null;
+    sizeQuantities?: SizeQuantity[];
   };
   petPackagingSelection: {
     petPackagingId: PetPackaging;
@@ -1017,11 +1204,19 @@ export interface OrderResponse {
   sellingPrice: number;
   totalCost: number;
   profit: number;
+  priceMode?: "TOTAL" | "PER_BOTTLE" | "PER_PET";
+  unitPrice?: number;
+  paymentStatus: OrderPaymentStatus;
+  totalPaid: number;
+  payments?: OrderPaymentEntry[];
+  deliveredAt?: string | null;
+  lastReminderAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateOrderInput {
+  clientId?: string | null;
   clientDetails: {
     businessName: string;
     ownerName: string;
@@ -1031,8 +1226,9 @@ export interface CreateOrderInput {
   };
   bottleSelection: {
     sizes: BottleSize[];
-    bottleId: string;
-    sizeQuantities: SizeQuantity[];
+    bottleId?: string;
+    sizeQuantities?: SizeQuantity[];
+    sizeBottles?: SizeBottleSelection[];
   };
   capSelection: {
     capId: string;
@@ -1042,6 +1238,7 @@ export interface CreateOrderInput {
     type: "NEW_DESIGN" | "EXISTING_INVENTORY";
     logoImageUrl?: string;
     labelId?: string;
+    sizeQuantities?: SizeQuantity[];
   };
   petPackagingSelection: {
     petPackagingId: string;
@@ -1050,7 +1247,22 @@ export interface CreateOrderInput {
   }[];
   deliveryDate?: string;
   note?: string;
-  sellingPrice: number;
+  /** Estimated next order reminder date for the linked marketing client. */
+  nextOrderReminderAt?: string;
+  sellingPrice?: number;
+  priceMode?: "TOTAL" | "PER_BOTTLE" | "PER_PET";
+  unitPrice?: number;
+  waterRate?: number;
+  sellPerPET?: Record<BottleSize, number>;
+  priceBreakdown?: {
+    bottleSellPerUnit?: Record<BottleSize, number>;
+    petSellPerUnit?: Record<string, number>;
+  };
+  advancePayment?: {
+    amount: number;
+    method?: string;
+    note?: string;
+  };
 }
 
 export interface UpdateOrderInput {
@@ -1062,6 +1274,11 @@ export interface UpdateOrderInput {
     ownerPhone?: string;
     ownerWhatsapp?: string;
     isWhatsappSameAsPhone?: boolean;
+  };
+  payment?: {
+    amount: number;
+    method?: string;
+    note?: string;
   };
 }
 
@@ -1078,6 +1295,7 @@ export interface OrderSummary {
   pending: number;
   processing: number;
   completed: number;
+  delivered: number;
   cancelled: number;
 }
 
@@ -1120,12 +1338,12 @@ export async function fetchOrdersPaginated(
   const qs = query.toString();
   const url = qs ? `/api/orders/paginated?${qs}` : "/api/orders/paginated";
 
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<OrderResponse[]> & {
       pagination?: OrderPagination;
       summary?: OrderSummary;
     }
-  >(url, { method: "GET" });
+  >(url);
 
   const data = response.data ?? [];
   return {
@@ -1144,6 +1362,7 @@ export async function fetchOrdersPaginated(
         pending: 0,
         processing: 0,
         completed: 0,
+        delivered: 0,
         cancelled: 0,
       },
   };
@@ -1224,11 +1443,11 @@ export async function fetchMockups(params?: {
 }): Promise<{ data: MockupGallery[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } }> {
   const page = params?.page ?? 1;
   const pageSize = params?.pageSize ?? 20;
-  const response = await apiRequest<
+  const response = await apiGetEnvelope<
     ApiResponse<MockupGallery[]> & {
       pagination: { page: number; pageSize: number; total: number; totalPages: number };
     }
-  >(`/api/mockups?page=${page}&pageSize=${pageSize}`, { method: "GET" });
+  >(`/api/mockups?page=${page}&pageSize=${pageSize}`);
 
   return {
     data: response.data ?? [],
@@ -1256,4 +1475,287 @@ export function fetchStockAlerts(): Promise<StockAlert[]> {
 
 export function fetchMockup(id: string): Promise<MockupGallery> {
   return apiGet<MockupGallery>(`/api/mockups/${id}`);
+}
+
+export type InventoryOrderItemType =
+  | "Bottles"
+  | "Caps"
+  | "PET Packaging"
+  | "Labels";
+
+export type InventoryOrderPaymentStatus = "PAID" | "PARTIAL" | "UNPAID";
+
+export type InventoryOrderReceivedStatus = "PENDING" | "RECEIVED";
+
+export type InventoryOrderPaymentSelection =
+  | "FULL"
+  | "HALF"
+  | "CUSTOM"
+  | "UNPAID";
+
+export interface InventoryOrderPaymentEntry {
+  amount: number;
+  method?: string;
+  note?: string;
+  receiptImageUrl?: string;
+  recordedAt: string;
+  recordedByName: string;
+}
+
+export interface InventoryOrderLine {
+  itemType: InventoryOrderItemType;
+  itemName: string;
+  quantity: number;
+  totalCost: number;
+}
+
+export interface InventoryOrder {
+  _id: string;
+  orderId: string;
+  itemType: InventoryOrderItemType;
+  itemName: string;
+  quantity: number;
+  totalCost: number;
+  items: InventoryOrderLine[];
+  paidAmount: number;
+  paymentStatus: InventoryOrderPaymentStatus;
+  payments: InventoryOrderPaymentEntry[];
+  expectedDeliveryDate: string;
+  receivedStatus: InventoryOrderReceivedStatus;
+  receivedAt?: string;
+  receivedByName?: string;
+  billImageUrl?: string;
+  receiptImageUrl?: string;
+  notes?: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+  overdueAlertedAt?: string;
+}
+
+export interface CreateInventoryOrderInput {
+  items: InventoryOrderLine[];
+  paymentSelection: InventoryOrderPaymentSelection;
+  paidAmount?: number;
+  method?: string;
+  note?: string;
+  billImageUrl?: string;
+  receiptImageUrl?: string;
+  expectedDeliveryDate: string;
+  notes?: string;
+}
+
+export interface UpdateInventoryOrderPaymentInput {
+  paidAmount: number;
+  method?: string;
+  note?: string;
+  receiptImageUrl: string;
+}
+
+export function fetchInventoryOrders(params?: {
+  search?: string;
+  type?: string;
+  paymentStatus?: string;
+  receivedStatus?: string;
+}): Promise<InventoryOrder[]> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.type) qs.set("type", params.type);
+  if (params?.paymentStatus) qs.set("paymentStatus", params.paymentStatus);
+  if (params?.receivedStatus) qs.set("receivedStatus", params.receivedStatus);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<InventoryOrder[]>(`/api/inventory-orders${suffix}`);
+}
+
+export function fetchInventoryOrder(id: string): Promise<InventoryOrder> {
+  return apiGet<InventoryOrder>(`/api/inventory-orders/${id}`);
+}
+
+export function createInventoryOrder(
+  input: CreateInventoryOrderInput
+): Promise<InventoryOrder> {
+  return apiSend<InventoryOrder>("/api/inventory-orders", "POST", input);
+}
+
+export function updateInventoryOrderPayment(
+  id: string,
+  input: UpdateInventoryOrderPaymentInput
+): Promise<InventoryOrder> {
+  return apiPatch<InventoryOrder>(
+    `/api/inventory-orders/${id}/payment`,
+    input
+  );
+}
+
+export function markInventoryOrderReceived(id: string): Promise<InventoryOrder> {
+  return apiPatch<InventoryOrder>(`/api/inventory-orders/${id}/receive`, {});
+}
+
+export function deleteInventoryOrder(
+  id: string
+): Promise<{ id: string; orderId: string; itemName: string }> {
+  return apiSend<{ id: string; orderId: string; itemName: string }>(
+    `/api/inventory-orders/${id}`,
+    "DELETE"
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Marketing Clients                                                 */
+/* ------------------------------------------------------------------ */
+
+export type MarketingDealStatus =
+  | "PENDING_VISIT"
+  | "VISITED_IN_PROGRESS"
+  | "DEAL_CLOSED_WON"
+  | "DEAL_LOST_NOT_INTERESTED"
+  | "NOT_A_CLIENT_ANYMORE";
+
+export type MarketingFollowUpStatus = "PENDING" | "OVERDUE" | "SNOOZED";
+
+export interface MarketingClientNote {
+  _id: string;
+  text: string;
+  date: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export interface MarketingClientReminder {
+  _id: string;
+  reminderAt: string;
+  message: string;
+  createdByName?: string;
+  alertedAt?: string | null;
+  createdAt: string;
+}
+
+export interface MarketingClient {
+  _id: string;
+  businessName: string;
+  ownerName?: string;
+  phone?: string;
+  whatsapp?: string;
+  designAssets: string[];
+  dealStatus: MarketingDealStatus;
+  rejectionReason?: string;
+  cancellationReason?: string;
+  nextOrderReminderAt?: string | null;
+  lastOrderAt?: string | null;
+  followUpStatus?: MarketingFollowUpStatus;
+  notes: MarketingClientNote[];
+  reminders: MarketingClientReminder[];
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMarketingClientInput {
+  businessName: string;
+  ownerName?: string;
+  phone?: string;
+  whatsapp?: string;
+  designAssets?: string[];
+  dealStatus: MarketingDealStatus;
+  rejectionReason?: string;
+  noteText?: string;
+  noteDate?: string;
+  reminderAt?: string;
+  reminderMessage?: string;
+}
+
+export interface UpdateMarketingClientInput {
+  businessName?: string;
+  ownerName?: string;
+  phone?: string;
+  whatsapp?: string;
+  designAssets?: string[];
+  dealStatus?: MarketingDealStatus;
+  rejectionReason?: string;
+  cancellationReason?: string;
+}
+
+export interface AddMarketingClientNoteInput {
+  text: string;
+  date?: string;
+}
+
+export interface AddMarketingClientReminderInput {
+  reminderAt: string;
+  message: string;
+}
+
+export function fetchMarketingClients(params?: {
+  search?: string;
+  status?: string;
+}): Promise<MarketingClient[]> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status) qs.set("status", params.status);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiGet<MarketingClient[]>(`/api/marketing-clients${suffix}`);
+}
+
+export function fetchMarketingClient(id: string): Promise<MarketingClient> {
+  return apiGet<MarketingClient>(`/api/marketing-clients/${id}`);
+}
+
+export function createMarketingClient(
+  input: CreateMarketingClientInput
+): Promise<MarketingClient> {
+  return apiSend<MarketingClient>("/api/marketing-clients", "POST", input);
+}
+
+export function updateMarketingClient(
+  id: string,
+  input: UpdateMarketingClientInput
+): Promise<MarketingClient> {
+  return apiPatch<MarketingClient>(`/api/marketing-clients/${id}`, input);
+}
+
+export function addMarketingClientNote(
+  id: string,
+  input: AddMarketingClientNoteInput
+): Promise<MarketingClient> {
+  return apiSend<MarketingClient>(`/api/marketing-clients/${id}/notes`, "POST", input);
+}
+
+export function addMarketingClientReminder(
+  id: string,
+  input: AddMarketingClientReminderInput
+): Promise<MarketingClient> {
+  return apiSend<MarketingClient>(
+    `/api/marketing-clients/${id}/reminders`,
+    "POST",
+    input
+  );
+}
+
+export function snoozeMarketingClientNextOrder(
+  id: string,
+  input: { nextOrderReminderAt: string }
+): Promise<MarketingClient> {
+  return apiPatch<MarketingClient>(
+    `/api/marketing-clients/${id}/next-order`,
+    input
+  );
+}
+
+export function markMarketingClientChurned(
+  id: string,
+  input: { cancellationReason: string }
+): Promise<MarketingClient> {
+  return apiPatch<MarketingClient>(
+    `/api/marketing-clients/${id}/churn`,
+    input
+  );
+}
+
+export function deleteMarketingClient(
+  id: string
+): Promise<{ id: string; businessName: string }> {
+  return apiSend<{ id: string; businessName: string }>(
+    `/api/marketing-clients/${id}`,
+    "DELETE"
+  );
 }

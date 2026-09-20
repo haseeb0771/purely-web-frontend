@@ -58,6 +58,16 @@ export function subscribeInventoryNotification(
   };
 }
 
+export function subscribeStockAlert(
+  listener: (payload: unknown) => void
+): () => void {
+  const activeSocket = connectAdminSocket();
+  activeSocket.on("stock_alert", listener);
+  return () => {
+    activeSocket.off("stock_alert", listener);
+  };
+}
+
 export function subscribeBottleCreated(
   listener: (payload: unknown) => void
 ): () => void {
@@ -95,5 +105,35 @@ export function subscribeMockupProgress(
   activeSocket.on("mockup_progress", listener);
   return () => {
     activeSocket.off("mockup_progress", listener);
+  };
+}
+
+export function subscribePaymentReminder(
+  listener: (payload: unknown) => void
+): () => void {
+  const activeSocket = connectAdminSocket();
+  activeSocket.on("payment_reminder", listener);
+  return () => {
+    activeSocket.off("payment_reminder", listener);
+  };
+}
+
+export function subscribeMarketingNotification(
+  listener: (payload: unknown) => void
+): () => void {
+  const activeSocket = connectAdminSocket();
+  activeSocket.on("marketing_notification", listener);
+  return () => {
+    activeSocket.off("marketing_notification", listener);
+  };
+}
+
+export function subscribeMarketingReminder(
+  listener: (payload: unknown) => void
+): () => void {
+  const activeSocket = connectAdminSocket();
+  activeSocket.on("marketing_reminder", listener);
+  return () => {
+    activeSocket.off("marketing_reminder", listener);
   };
 }

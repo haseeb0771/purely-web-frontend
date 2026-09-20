@@ -20,7 +20,7 @@ import NumberInput from "@/components/admin/NumberInput";
 import {
   ApiError,
   fetchFinanceSummary,
-  fetchExpenseCategories,
+  fetchExpenseCategoriesPaginated,
   createExpenseCategory,
   fetchExpenses,
   createExpense,
@@ -81,6 +81,9 @@ export default function FinanceExpensesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
+  const [categoryPage, setCategoryPage] = useState(1);
+  const [categoryHasMore, setCategoryHasMore] = useState(false);
+  const [loadingMoreCategories, setLoadingMoreCategories] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [amount, setAmount] = useState<number>(0);
   const [note, setNote] = useState("");
@@ -115,12 +118,29 @@ export default function FinanceExpensesPage() {
 
   const loadCategories = useCallback(async () => {
     try {
-      const data = await fetchExpenseCategories();
-      setCategories(data);
+      const result = await fetchExpenseCategoriesPaginated(1, 20);
+      setCategories(result.data);
+      setCategoryHasMore(result.hasMore);
+      setCategoryPage(1);
     } catch {
       setCategories([]);
+      setCategoryHasMore(false);
     }
   }, []);
+
+  function loadMoreCategories() {
+    if (!categoryHasMore || loadingMoreCategories) return;
+    const nextPage = categoryPage + 1;
+    setLoadingMoreCategories(true);
+    void fetchExpenseCategoriesPaginated(nextPage, 20)
+      .then((result) => {
+        setCategories((prev) => [...prev, ...result.data]);
+        setCategoryHasMore(result.hasMore);
+        setCategoryPage(nextPage);
+      })
+      .catch(() => setCategoryHasMore(false))
+      .finally(() => setLoadingMoreCategories(false));
+  }
 
   const loadExpenses = useCallback(
     async (targetPage: number) => {
@@ -297,6 +317,8 @@ export default function FinanceExpensesPage() {
                   onSelect={setSelectedCategory}
                   actionLabel="+ Add new expense name"
                   onAction={() => setShowNewName(true)}
+                  onReachEnd={loadMoreCategories}
+                  loadingMore={loadingMoreCategories}
                 />
               </div>
               <div>

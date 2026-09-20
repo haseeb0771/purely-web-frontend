@@ -16,7 +16,10 @@ import {
   type StockAlert,
   type StockAlertModule,
 } from "@/lib/admin-api";
-import { subscribeInventoryNotification } from "@/lib/admin-socket";
+import {
+  subscribeInventoryNotification,
+  subscribeStockAlert,
+} from "@/lib/admin-socket";
 
 const MODULE_LABELS: Record<StockAlertModule, string> = {
   bottles: "Bottles",
@@ -49,9 +52,16 @@ export default function StockAlertsPage() {
   }, [load]);
 
   useEffect(() => {
-    return subscribeInventoryNotification(() => {
+    const unsubInventory = subscribeInventoryNotification(() => {
       void load();
     });
+    const unsubStockAlert = subscribeStockAlert(() => {
+      void load();
+    });
+    return () => {
+      unsubInventory();
+      unsubStockAlert();
+    };
   }, [load]);
 
   return (
@@ -89,11 +99,11 @@ export default function StockAlertsPage() {
             {alerts.length} item{alerts.length !== 1 && "s"} below alert level
           </p>
           <div className="divide-y divide-[#F1F5F9] dark:divide-[#1E293B]">
-            {alerts.map((alert) => {
+            {alerts.map((alert, index) => {
               const shortfall = alert.stockAlertLevel - alert.quantity;
               return (
                 <Link
-                  key={`${alert.module}-${alert.itemId}`}
+                  key={`${alert.module}-${alert.itemId}-${alert.size ?? ""}-${index}`}
                   href={alert.href}
                   className="flex items-center gap-4 px-4 py-4 transition-colors hover:bg-[#F8FAFC] dark:hover:bg-[#1E293B] sm:px-6"
                 >
