@@ -58,9 +58,16 @@ async function apiRequest<T>(
   }
 }
 
-export const API_BASE_URL = (
-  process.env.API_URL ?? "http://localhost:5000"
-).replace(/\/+$/, "");
+export const API_BASE_URL = (() => {
+  const fromEnv = process.env.API_URL;
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  if (typeof window !== "undefined") {
+    // Same host as the page (works from any device: laptop, phone, LAN IP,
+    // and in production where frontend + backend share a host). Backend :5000.
+    return `${window.location.protocol}//${window.location.hostname}:5000`;
+  }
+  return "http://localhost:5000";
+})();
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
   let body: T;
