@@ -59,16 +59,24 @@ async function apiRequest<T>(
 }
 
 export const API_BASE_URL = (() => {
-  const fromEnv = process.env.API_URL;
-  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  // 1. Check all possible environment variable names
+  const rawEnv =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.BASE_URL ||
+    process.env.API_URL;
+
+  // 2. If env variable exists, clean trailing slash and return
+  if (rawEnv && rawEnv.trim() !== "") {
+    return rawEnv.trim().replace(/\/+$/, "");
+  }
+
+  // 3. Dev / LAN fallback (HTTP local setup)
   if (typeof window !== "undefined" && window.location.protocol === "http:") {
-    // Dev / LAN: same host the page was loaded from (works from ANY device:
-    // PC 'localhost', phone/LAN 'http://192.168.x.x'). Backend runs on :5000.
     return `${window.location.protocol}//${window.location.hostname}:5000`;
   }
-  // Production (https) or pre-render: env override, else classic localhost
-  // (production deploys supply API_URL so they never hit this default).
-  return "https://purely-backend.vercel.app/";
+
+  // 4. Production HTTPS fallback (NO trailing slash)
+  return "https://purely-backend.vercel.app";
 })();
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {

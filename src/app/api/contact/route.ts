@@ -75,9 +75,9 @@ function buildHtml({ name, email, phone, message }: ContactPayload): string {
 }
 
 const API_BASE_URL = (
-  process.env.API_URL ??
-  process.env.API_URL ??
-  "https://purely-backend.vercel.app/"
+  process.env.BASE_URL ??
+  process.env.BASE_URL ??
+  "https://purely-backend.vercel.app"
 ).replace(/\/+$/, "");
 
 async function persistInquiry(payload: ContactPayload): Promise<boolean> {
