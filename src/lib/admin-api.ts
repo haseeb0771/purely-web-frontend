@@ -58,17 +58,30 @@ async function apiRequest<T>(
   }
 }
 
+function cleanBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  return raw
+    .trim()
+    .replace(/[\/\\]+$/g, "")
+    .replace(/^[\/\\]+/g, "");
+}
+
 export const API_BASE_URL = (() => {
-  const fromEnv = process.env.API_URL;
-  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  // NEXT_PUBLIC_* is the only value inlined into the browser bundle, so it MUST
+  // be read in production. API_URL is server-only (never reaches the client);
+  // it is kept as a documented dev convenience.
+  const fromEnv =
+    cleanBaseUrl(process.env.NEXT_PUBLIC_API_URL) ??
+    cleanBaseUrl(process.env.API_URL);
+  if (fromEnv) return fromEnv;
   if (typeof window !== "undefined" && window.location.protocol === "http:") {
     // Dev / LAN: same host the page was loaded from (works from ANY device:
     // PC 'localhost', phone/LAN 'http://192.168.x.x'). Backend runs on :5000.
     return `${window.location.protocol}//${window.location.hostname}:5000`;
   }
-  // Production (https) or pre-render: env override, else classic localhost
-  // (production deploys supply API_URL so they never hit this default).
-  return "https://purely-backend.vercel.app/";
+  // Production (https) fallback. No trailing slash: urls are joined as
+  // `${API_BASE_URL}${"/api/..."}`, so a trailing slash causes `//api` -> 308.
+  return "https://purely-backend.vercel.app";
 })();
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
