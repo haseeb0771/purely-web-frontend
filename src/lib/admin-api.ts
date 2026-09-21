@@ -68,7 +68,7 @@ export const API_BASE_URL = (() => {
   }
   // Production (https) or pre-render: env override, else classic localhost
   // (production deploys supply API_URL so they never hit this default).
-  return "http://localhost:5000";
+  return "https://purely-backend.vercel.app/";
 })();
 
 async function parseResponse<T extends ApiResponse>(response: Response): Promise<T> {
