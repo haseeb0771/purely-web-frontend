@@ -70,12 +70,7 @@ export const API_BASE_URL = (() => {
     return rawEnv.trim().replace(/\/+$/, "");
   }
 
-  // 3. Dev / LAN fallback (HTTP local setup)
-  if (typeof window !== "undefined" && window.location.protocol === "http:") {
-    return `${window.location.protocol}//${window.location.hostname}:5000`;
-  }
-
-  // 4. Production HTTPS fallback (NO trailing slash)
+  // 3. Fallback for both Dev and Production (Points directly to Deployed Backend)
   return "https://purely-backend.vercel.app";
 })();
 
