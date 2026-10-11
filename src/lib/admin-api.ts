@@ -1400,6 +1400,49 @@ export function deleteOrder(
   );
 }
 
+/**
+ * Fetch the stored (or lazily regenerated) invoice PDF for an order as a
+ * Blob. The admin JWT must be sent by hand because opening a plain URL cannot
+ * attach the Authorization header for a cross-origin resource.
+ */
+export async function fetchOrderInvoiceBlob(id: string): Promise<Blob> {
+  const token = getAuthToken();
+  if (!token) {
+    throw new ApiError("No authentication token found.", 401);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/orders/${id}/invoice`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (response.status === 401) {
+    handleUnauthorized();
+    throw new ApiError("Session expired. Please log in again.", 401);
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    const message = text || `Failed to fetch invoice for order ${id}.`;
+    throw new ApiError(message, response.status);
+  }
+
+  return response.blob();
+}
+
+/** Open a fetched invoice Blob in a new tab (browser PDF viewer). */
+export function openInvoiceBlob(blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export class ApiError extends Error {
   readonly status: number;
 

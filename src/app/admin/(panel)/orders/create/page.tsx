@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus, Send, X } from "lucide-react";
+import {
+  FileDown,
+  Loader2,
+  MessageCircle,
+  Plus,
+  RefreshCw,
+  Send,
+  X,
+} from "lucide-react";
 import AdminPage from "@/components/admin/AdminPage";
 import DatePicker from "@/components/admin/DatePicker";
 import NumberInput from "@/components/admin/NumberInput";
@@ -17,12 +25,14 @@ import {
   fetchAvailablePetPackaging,
   fetchBottlesBySizesPaginated,
   fetchMarketingClients,
+  fetchOrderInvoiceBlob,
   fetchPaginatedLabels,
   type Bottle,
   type BottleSize,
   type Cap,
   type Label,
   type MarketingClient,
+  type OrderResponse,
   type PetPackaging,
 } from "@/lib/admin-api";
 
@@ -242,6 +252,8 @@ export default function CreateOrderPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<OrderResponse | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   /* ---------- Marketing client (auto-population) ---------- */
   const [clientId, setClientId] = useState("");
@@ -794,6 +806,11 @@ export default function CreateOrderPage() {
         (LITERS_PER_SIZE[size] ?? 0) * waterRate
       );
 
+      // PET packaging cost split across the bottles it wraps (500ml pack = 12
+      // bottles, 1500ml = 6, etc.), folded into the bottle's base cost.
+      const petCostPerBottle =
+        petCount > 0 ? round2(petUnitCost / bottlesPerPET) : 0;
+
       const bottleCostAmount = round2(bottleCostPerUnit * bottleCount);
       const capCostAmount = round2(capUnitCost * bottleCount);
       const labelCostAmount = round2(labelCostPerUnit * labelQty);
@@ -801,12 +818,10 @@ export default function CreateOrderPage() {
       const waterCostAmount = round2(waterCostPerBottle * bottleCount);
 
       const costPerUnit = round2(
-        bottleCostPerUnit + capUnitCost + labelCostPerUnit
+        bottleCostPerUnit + capUnitCost + labelCostPerUnit + petCostPerBottle
       );
       const costPerBottle = round2(costPerUnit + waterCostPerBottle);
-      const costPerPET = round2(
-        costPerBottle * bottlesPerPET + (petCount > 0 ? petUnitCost : 0)
-      );
+      const costPerPET = round2(costPerBottle * bottlesPerPET);
       const costAmount = round2(
         bottleCostAmount +
           capCostAmount +
@@ -828,6 +843,7 @@ export default function CreateOrderPage() {
         capCostPerUnit: capUnitCost,
         labelCostPerUnit,
         petUnitCost,
+        petCostPerBottle,
         waterCostPerBottle,
         bottleCostAmount,
         capCostAmount,
@@ -1000,7 +1016,7 @@ export default function CreateOrderPage() {
         quantity: petBySize[size].quantity,
       }));
     try {
-      await createOrder({
+      const created = await createOrder({
         clientId: clientId || null,
         clientDetails: {
           businessName: businessName.trim(),
@@ -1046,7 +1062,8 @@ export default function CreateOrderPage() {
             : undefined,
       });
       toast.success("Order created successfully. Stock has been deducted.");
-      router.push("/admin/orders");
+      setCreatedOrder(created);
+      setPreviewOpen(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to create the order."
@@ -1080,7 +1097,6 @@ export default function CreateOrderPage() {
     advanceAmount,
     advanceMethod,
     advanceNote,
-    router,
     toast,
   ]);
 
@@ -1603,6 +1619,9 @@ export default function CreateOrderPage() {
                         petItem.quantity
                       )
                   : 0;
+                const petCostPerBottle = petUnitCost
+                  ? Math.round((petUnitCost / (BOTTLES_PER_PET[size] ?? 1)) * 100) / 100
+                  : 0;
                 return (
                   <div
                     key={size}
@@ -1648,7 +1667,8 @@ export default function CreateOrderPage() {
                     </div>
                     {row?.petPackagingId ? (
                       <p className="mt-2 text-[11px] text-[#94A3B8]">
-                        Packaging cost: {rs(petUnitCost)}/PET pack
+                        Packaging cost: {rs(petUnitCost)}/PET pack ·{" "}
+                        {rs(petCostPerBottle)}/bottle (added to bottle base cost)
                       </p>
                     ) : (
                       <p className="mt-2 text-[11px] text-amber-500">
@@ -2068,6 +2088,198 @@ export default function CreateOrderPage() {
           </div>
         </div>
       ) : null}
+    {previewOpen && createdOrder ? (
+        <InvoicePreviewModal
+          order={createdOrder}
+          onClose={() => {
+            setPreviewOpen(false);
+            setCreatedOrder(null);
+            router.push("/admin/orders");
+          }}
+        />
+      ) : null}
     </AdminPage>
+  );
+}
+
+/* ==================== Invoice preview after creating an order ==================== */
+
+function InvoicePreviewModal({
+  order,
+  onClose,
+}: {
+  order: OrderResponse;
+  onClose: () => void;
+}) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let url: string | null = null;
+    setLoading(true);
+    setLoadError(null);
+    fetchOrderInvoiceBlob(order._id)
+      .then((blob) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setBlobUrl(url);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "Could not load the invoice preview."
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [order._id]);
+
+  const balance = round2(order.sellingPrice - order.totalPaid);
+  const whatsappNumber = (
+    order.clientDetails.ownerWhatsapp || order.clientDetails.ownerPhone || ""
+  ).replace(/\D/g, "");
+  const waText = encodeURIComponent(
+    [
+      `Hi ${order.clientDetails.businessName}, here is your invoice ${order.orderId}.`,
+      `Total: Rs ${order.sellingPrice.toLocaleString("en-PK")}`,
+      `Paid: Rs ${order.totalPaid.toLocaleString("en-PK")}`,
+      balance > 0
+        ? `Balance due: Rs ${balance.toLocaleString("en-PK")}`
+        : "Paid in full — thank you!",
+      "",
+      "Purely Custom Labels",
+    ].join("\n")
+  );
+  const waUrl = `https://wa.me/${whatsappNumber}?text=${waText}`;
+
+  const handleSave = () => {
+    if (!blobUrl) return;
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `Invoice-${order.orderId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const retry = () => {
+    setBlobUrl(null);
+    setLoading(true);
+    setLoadError(null);
+    fetchOrderInvoiceBlob(order._id)
+      .then((blob) => setBlobUrl(URL.createObjectURL(blob)))
+      .catch((err) =>
+        setLoadError(
+          err instanceof Error
+            ? err.message
+            : "Could not load the invoice preview."
+        )
+      )
+      .finally(() => setLoading(false));
+  };
+
+  const btnBase =
+    "inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60";
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-[#0F172A]/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="relative flex max-h-[94vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white shadow-2xl dark:border-[#334155] dark:bg-[#0F172A]">
+        <div className="flex items-center justify-between gap-3 border-b border-[#E2E8F0] bg-[#0B2545] px-5 py-3.5 dark:border-[#334155]">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#8FE3E6]">
+              Invoice Preview
+            </p>
+            <h3 className="text-base font-bold text-white">{order.orderId}</h3>
+            <p className="mt-0.5 text-xs text-[#CBD5E1]">
+              Client: {order.clientDetails.businessName}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label="Close invoice preview"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-hidden bg-[#F8FAFC] dark:bg-[#1E293B]">
+          {loading ? (
+            <div className="flex h-72 items-center justify-center text-sm font-semibold text-[#64748B]">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              Generating invoice preview…
+            </div>
+          ) : loadError ? (
+            <div className="flex h-72 flex-col items-center justify-center gap-3 px-6 text-center">
+              <p className="text-sm font-semibold text-[#DC2626]">{loadError}</p>
+              <button
+                type="button"
+                onClick={retry}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#0B2545] px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-[#13294b]"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </button>
+            </div>
+          ) : blobUrl ? (
+            <iframe
+              title={`Invoice ${order.orderId}`}
+              src={blobUrl}
+              className="h-[58vh] w-full border-0 bg-white"
+            />
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E8F0] bg-[#F8FAFC] px-5 py-3.5 dark:border-[#334155] dark:bg-[#13294b]">
+          <div className="text-xs font-medium text-[#64748B] dark:text-[#CBD5E1]">
+            {whatsappNumber
+              ? `WhatsApp recipient: +${whatsappNumber}`
+              : "No client WhatsApp number set on this order."}
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              disabled={!blobUrl}
+              onClick={handleSave}
+              className={`${btnBase} bg-[#0B2545] hover:bg-[#13294b] dark:bg-[#2FB9BF] dark:hover:bg-[#25a3a8]`}
+            >
+              <FileDown className="h-4 w-4" />
+              Save PDF
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                window.open(waUrl, "_blank", "noopener,noreferrer")
+              }
+              className={`${btnBase} bg-[#25D366] hover:bg-[#1fb457]`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Share on WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className={`${btnBase} border border-[#E2E8F0] bg-white text-[#475569] hover:bg-[#eef2f7] dark:border-[#334155] dark:bg-transparent dark:text-[#E2E8F0] dark:hover:bg-[#1E293B]`}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

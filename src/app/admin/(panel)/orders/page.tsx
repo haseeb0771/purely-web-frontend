@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ClipboardList,
   Eye,
+  FileText,
   FilterX,
   Loader2,
   Pencil,
@@ -27,7 +28,9 @@ import { useToast } from "@/components/admin/toast";
 import {
   ApiError,
   deleteOrder,
+  fetchOrderInvoiceBlob,
   fetchOrdersPaginated,
+  openInvoiceBlob,
   updateOrder,
   type OrderPagination,
   type OrderResponse,
@@ -266,6 +269,8 @@ export default function ManageOrdersPage() {
   const [paymentOrder, setPaymentOrder] = useState<OrderResponse | null>(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
 
+  const [invoiceLoadingId, setInvoiceLoadingId] = useState<string | null>(null);
+
   const safeOrders = Array.isArray(orders) ? orders : [];
 
   const filtersRef = useRef<FiltersState>(emptyFilters);
@@ -403,6 +408,21 @@ export default function ManageOrdersPage() {
         : "",
       status: order.status,
     });
+  }
+
+  async function handleViewInvoice(order: OrderResponse) {
+    if (invoiceLoadingId) return;
+    setInvoiceLoadingId(order._id);
+    try {
+      const blob = await fetchOrderInvoiceBlob(order._id);
+      openInvoiceBlob(blob);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "Failed to load invoice."
+      );
+    } finally {
+      setInvoiceLoadingId(null);
+    }
   }
 
   async function saveEdit() {
@@ -668,6 +688,22 @@ export default function ManageOrdersPage() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                void handleViewInvoice(order);
+                              }}
+                              title="View invoice"
+                              disabled={invoiceLoadingId === order._id}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#475569] transition-colors hover:border-[#2FB9BF]/50 hover:text-[#2FB9BF] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#334155] dark:text-[#94A3B8]"
+                            >
+                              {invoiceLoadingId === order._id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileText className="h-4 w-4" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 openEdit(order);
                               }}
                               title="Edit order"
@@ -738,6 +774,8 @@ export default function ManageOrdersPage() {
           savingStatus={savingStatus}
           onSaveStatus={saveStatus}
           onRecordPayment={() => setPaymentOrder(selectedOrder)}
+          onViewInvoice={() => void handleViewInvoice(selectedOrder)}
+          invoiceLoading={invoiceLoadingId === selectedOrder._id}
           onClose={() => setSelectedOrder(null)}
         />
       )}
@@ -816,6 +854,8 @@ function OrderDetailsModal({
   savingStatus,
   onSaveStatus,
   onRecordPayment,
+  onViewInvoice,
+  invoiceLoading,
   onClose,
 }: {
   order: OrderResponse;
@@ -824,6 +864,8 @@ function OrderDetailsModal({
   savingStatus: boolean;
   onSaveStatus: () => void;
   onRecordPayment: () => void;
+  onViewInvoice: () => void;
+  invoiceLoading: boolean;
   onClose: () => void;
 }) {
   const bottle = order.bottleSelection.bottleId;
@@ -892,6 +934,20 @@ function OrderDetailsModal({
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onViewInvoice}
+              disabled={invoiceLoading}
+              title="View invoice"
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-[#2FB9BF] px-3 text-sm font-semibold text-white transition-colors hover:bg-[#0BAEC4] disabled:opacity-50"
+            >
+              {invoiceLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+              Invoice
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -1235,7 +1291,7 @@ function OrderDetailsModal({
                           ).toLocaleString()} water)`
                         : ` (Rs. ${line.costPerUnit.toLocaleString()}/bottle)`}
                       {line.costPerPET && line.petCount
-                        ? ` · PET Rs. ${line.costPerPET.toLocaleString()}`
+                        ? ` · Rs. ${line.costPerPET.toLocaleString()}/pack`
                         : ""}
                     </span>
                     <span className="font-medium text-[#0F172A] dark:text-white">
@@ -1261,20 +1317,22 @@ function OrderDetailsModal({
                     </span>
                   </div>
                 )}
-                {order.priceBreakdown.petLines.map((line, i) => (
-                  <div
-                    key={`bd-pet-${i}`}
-                    className="flex justify-between gap-2 text-[#64748B] dark:text-[#94A3B8]"
-                  >
-                    <span className="truncate">
-                      PET {line.size} × {line.quantity.toLocaleString("en-US")} (Rs.{" "}
-                      {line.costPerUnit.toLocaleString()}/pack)
-                    </span>
-                    <span className="font-medium text-[#0F172A] dark:text-white">
-                      {money(line.costAmount)}
-                    </span>
-                  </div>
-                ))}
+                {(order.priceBreakdown.petLines ?? [])
+                  .filter((line) => (line.costAmount ?? 0) > 0)
+                  .map((line, i) => (
+                    <div
+                      key={`bd-pet-${i}`}
+                      className="flex justify-between gap-2 text-[#64748B] dark:text-[#94A3B8]"
+                    >
+                      <span className="truncate">
+                        PET {line.size} × {line.quantity.toLocaleString("en-US")} (Rs.{" "}
+                        {line.costPerUnit.toLocaleString()}/pack)
+                      </span>
+                      <span className="font-medium text-[#0F172A] dark:text-white">
+                        {money(line.costAmount)}
+                      </span>
+                    </div>
+                  ))}
                 {order.priceBreakdown.water.amount > 0 && (
                   <div className="flex justify-between text-[#0E7A80] dark:text-[#5EEAD4]">
                     <span>
@@ -1411,17 +1469,22 @@ function OrderDetailsModal({
                         className="flex justify-between text-xs text-[#64748B] dark:text-[#94A3B8]"
                       >
                         <span>
-                          {line.size} × {line.quantity.toLocaleString("en-US")}
-                          {line.sellPerPET
-                            ? ` (Rs. ${line.sellPerPET.toLocaleString()}/PET)`
-                            : ` (Rs. ${(line.sellPerUnit ?? 0).toLocaleString()}/bottle)`}
+                          {line.size} × {line.quantity.toLocaleString("en-US")} bottles
+                          {line.sellPerUnit
+                            ? ` (Rs. ${line.sellPerUnit.toLocaleString()}/bottle`
+                            : ""}
+                          {line.sellPerPET && line.petCount
+                            ? ` · Rs. ${line.sellPerPET.toLocaleString()}/PET)`
+                            : line.sellPerUnit
+                              ? ")"
+                              : ""}
                         </span>
                         <span className="font-semibold text-[#0F172A] dark:text-white">
                           {money(line.sellAmount ?? 0)}
                         </span>
                       </div>
                     ))}
-                  {order.priceBreakdown.petLines
+                  {(order.priceBreakdown.petLines ?? [])
                     .filter((line) => (line.sellAmount ?? 0) > 0)
                     .map((line, i) => (
                       <div
